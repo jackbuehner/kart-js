@@ -1,0 +1,10 @@
+.git
+lib/
+patches/
+src/
+tmp/
+.gitignore
+.prettierrc
+.release-it.ts
+build.ts
+tsconfig.tsbuildinfo
