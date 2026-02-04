@@ -1,5 +1,6 @@
+import * as fs from '@zenfs/core';
 import { existsSync } from '@zenfs/core';
-import * as fs from '@zenfs/core/promises';
+import { readdir, rm, stat } from '@zenfs/core/promises';
 import { clone, resolveRef } from 'isomorphic-git';
 import type { KartDiff } from './table-dataset-v3/diffs.js';
 import { TableDatasetV3 } from './table-dataset-v3/TableDatasetV3.ts';
@@ -37,7 +38,7 @@ export class Kart {
 
     // delete existing directory
     if (existsSync(dir)) {
-      await fs.rm(dir, { recursive: true, force: true });
+      await rm(dir, { recursive: true, force: true });
     }
 
     const http = await (async () => {
@@ -71,7 +72,7 @@ export class Kart {
       value.dataset.working.off();
     }
 
-    await fs.rm(this.#repoDir.absolute, { recursive: true, force: true });
+    await rm(this.#repoDir.absolute, { recursive: true, force: true });
   }
 
   dispose() {
@@ -106,10 +107,10 @@ export class Kart {
    * dataset in the repository.
    */
   private async *entries() {
-    const filesOrFolders = await fs.readdir(this.#repoDir.absolute);
+    const filesOrFolders = await readdir(this.#repoDir.absolute);
     const folders = filesOrFolders.filter(async (fileOrFolder) => {
-      const stat = await fs.stat(Path.join(this.#repoDir.absolute, fileOrFolder).absolute);
-      return stat.isDirectory();
+      const stats = await stat(Path.join(this.#repoDir.absolute, fileOrFolder).absolute);
+      return stats.isDirectory();
     });
 
     for (const folder of folders) {

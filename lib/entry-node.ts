@@ -3,11 +3,12 @@ export { WorkingFeatureCollection } from './table-dataset-v3/WorkingFeatureColle
 
 import { configureSingle, Passthrough } from '@zenfs/core';
 import fs from 'node:fs';
-import { Kart } from './Kart.ts';
+import { Kart as _Kart } from './Kart.ts';
 import { loadShims } from './shims/loadShims.ts';
 
 loadShims();
 
+let hasInitialized = false;
 async function init() {
   const workingDir = process.cwd().replaceAll('\\', '/') + '/tmp';
   if (!(await fs.promises.stat(workingDir).catch(() => false))) {
@@ -20,7 +21,15 @@ async function init() {
     fs,
     prefix: workingDir,
   });
-}
-init();
 
-export { Kart };
+  hasInitialized = true;
+}
+
+export class Kart extends _Kart {
+  static async pull(...args: Parameters<typeof _Kart.pull>) {
+    if (!hasInitialized) {
+      await init();
+    }
+    return _Kart.pull(...args);
+  }
+}

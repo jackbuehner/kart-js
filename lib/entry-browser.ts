@@ -16,6 +16,9 @@ loadShims();
  * @param storeName The name of the IndexedDB store to use.
  */
 async function init(storeName: string) {
+  // required by isomorphic-git
+  window.Buffer = await import('buffer').then(({ Buffer }) => Buffer);
+
   // use indexdDB with ZenFS
   const fs = await resolveMountConfig({ backend: IndexedDB, storeName });
   mount(storeName, fs);
