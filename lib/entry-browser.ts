@@ -4,6 +4,9 @@ export { WorkingFeatureCollection } from './table-dataset-v3/WorkingFeatureColle
 import { mount, resolveMountConfig } from '@zenfs/core';
 import { IndexedDB } from '@zenfs/dom';
 import { Kart as _Kart } from './Kart.ts';
+import { loadShims } from './shims/loadShims.ts';
+
+loadShims();
 
 /**
  * Initializes the file system that `kart-js` will use in the browser.

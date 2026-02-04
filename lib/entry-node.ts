@@ -4,6 +4,9 @@ export { WorkingFeatureCollection } from './table-dataset-v3/WorkingFeatureColle
 import { configureSingle, Passthrough } from '@zenfs/core';
 import fs from 'node:fs';
 import { Kart } from './Kart.ts';
+import { loadShims } from './shims/loadShims.ts';
+
+loadShims();
 
 async function init() {
   const workingDir = process.cwd().replaceAll('\\', '/') + '/tmp';

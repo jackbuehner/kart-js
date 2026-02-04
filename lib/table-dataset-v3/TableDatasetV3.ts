@@ -14,7 +14,9 @@ import {
 import { Path } from '../utils/index.ts';
 import { decodeRawFeatures } from './decodeRawFeatures.ts';
 import { Legend, Legends } from './Legend.ts';
-import { schemaEntrySchema } from './schemas/table-dataset-v3.ts';
+import { PathStructure } from './PathStructure.ts';
+import { RawFeature } from './RawFeature.ts';
+import { Schema } from './Schema.ts';
 import { makeSerializeable } from './serializer.ts';
 import { WorkingFeatureCollection } from './WorkingFeatureCollection.ts';
 
@@ -25,8 +27,8 @@ export class TableDatasetV3 {
   readonly id: string;
   readonly title: string;
   readonly description?: string;
-  readonly pathStructure: z.infer<typeof pathStructureSchema>;
-  readonly schema: z.infer<typeof schemaEntrySchema>[];
+  readonly pathStructure: PathStructure;
+  readonly schema: Schema;
   readonly legends: Legends;
 
   readonly working: WorkingFeatureCollection;
@@ -50,7 +52,13 @@ export class TableDatasetV3 {
       this.description = validatedContents.description;
       this.legends = validatedContents.legends;
     } catch (error) {
-      throw new Error(`Dataset with id "${id}" has invalid contents: ${(error as Error).message}`);
+      const toThrow = new Error(`Dataset with id "${id}" has invalid contents: ${(error as Error).message}`);
+      if (error instanceof Error) {
+        toThrow.stack = error.stack;
+        toThrow.cause = error.cause;
+        toThrow.name = error.name;
+      }
+      throw toThrow;
     }
 
     this.working = new WorkingFeatureCollection(this.id, this.toFeatureCollection(), this.schema);
@@ -119,12 +127,10 @@ export class TableDatasetV3 {
     }
 
     const pathStructurePath = repoDir.join(id, '.table-dataset', 'meta', 'path-structure.json');
-    const pathStructureRaw = pathStructurePath.readFileSync({ encoding: 'utf-8' });
-    const pathStructure = pathStructureSchema.parse(JSON.parse(pathStructureRaw));
+    const pathStructure = PathStructure.fromFile(pathStructurePath);
 
     const schemaFilePath = repoDir.join(id, '.table-dataset', 'meta', 'schema.json');
-    const schemaRaw = schemaFilePath.readFileSync({ encoding: 'utf-8' });
-    const schema = z.array(schemaEntrySchema).parse(JSON.parse(schemaRaw));
+    const schema = Schema.fromFile(schemaFilePath);
 
     const legendDirPath = repoDir.join(id, '.table-dataset', 'meta', 'legend');
     const legendFiles = legendDirPath.readDirectorySync();
@@ -161,204 +167,41 @@ export class TableDatasetV3 {
     return featureFiles
       .filter((file) => file.isFile)
       .map((file) => {
-        const fileContents = file.readFileSync();
-        const fileData = msgpack.decode(fileContents, { extensionCodec, useBigInt64: true });
-
-        if (!Array.isArray(fileData) || fileData.length !== 2) {
-          throw new Error(`Feature file at path "${file}" is not a valid feature.`);
-        }
-
-        if (typeof fileData[0] !== 'string') {
-          throw new Error(`Feature file at path "${file}" does not have a valid legend id.`);
-        }
-
-        if (!Array.isArray(fileData[1])) {
-          throw new Error(`Feature file at path "${file}" does not have valid feature data.`);
-        }
-
-        // the file name is a base64-encoed msgpack-encoded array of the primary key values (in order)
-        const msgpackEncodedName = Buffer.from(file.name, 'base64');
-        const primaryKeyData = msgpack.decode(msgpackEncodedName) as unknown[];
-
-        // the other values are stored directly in the data array
-        const nonPrimaryKeyData = fileData[1] as unknown[];
+        const rawFeature = RawFeature.fromFile(file);
+        const rawFeatureData = rawFeature.toObject(this.legends, this.schema, this.pathStructure);
 
         const pathAfterFeatureDir = featureDirPath.relativeTo(file);
 
-        const legend = this.legends.find((legend) => legend.id === fileData[0]);
-        if (!legend) {
-          throw new Error(`Legend with id "${fileData[0]}" not found in dataset legends.`);
-        }
+        const primaryKeyNames = this.schema.filter((entry) => entry.isPrimary).map((entry) => entry.name);
 
-        // use the legend to construct the actual data object with proper column names
-        const properties: Record<string, unknown> = {};
-        legend.columnIds.forEach(({ columnId, isPrimary, dataIndex }) => {
-          const columnName = this.schema.find(({ id }) => id === columnId)?.name || columnId;
-          if (isPrimary) {
-            properties[columnName] = primaryKeyData[dataIndex];
-          } else {
-            properties[columnName] = nonPrimaryKeyData[dataIndex];
-          }
-        });
-
-        const primaryKeyNames = legend.primaryKeyIds.map((columnId) => {
-          return this.schema.find(({ id }) => id === columnId)?.name || columnId;
-        });
-
-        const geometryColumns = this.schema
-          .filter(({ dataType }) => dataType === 'geometry')
-          .map(({ name }) => name);
-        const primaryGeometryKey = geometryColumns.includes('geometry')
-          ? 'geometry'
-          : geometryColumns.includes('geom')
-            ? 'geom'
-            : geometryColumns[0];
-
-        // construct a json schema that can be used by clients that
-        // need to understand the constraints on each property
-        const schema = {
-          $schema: 'https://json-schema.org/draft/2020-12/schema' as const,
-          type: 'object' as const,
-          properties: Object.fromEntries(
-            legend.columnIds
-              .map(({ columnId }): [string, JsonSchemaDataTypes] | undefined => {
-                const columnSchema = this.schema.find(({ id }) => id === columnId);
-                if (!columnSchema) {
-                  return;
-                }
-                const key = columnSchema.name || columnId;
-
-                if (columnSchema.dataType === 'blob') {
-                  return [
-                    key,
-                    {
-                      type: 'array',
-                      items: { type: 'integer', minimum: 0, maximum: 255 },
-                      format: 'bytes',
-                    },
-                  ];
-                }
-
-                if (columnSchema.dataType === 'boolean') {
-                  return [key, { type: 'boolean' }];
-                }
-
-                if (columnSchema.dataType === 'date') {
-                  return [key, { type: 'string', format: 'date' }];
-                }
-
-                if (columnSchema.dataType === 'float') {
-                  return [
-                    key,
-                    {
-                      type: 'number',
-                      minimum: columnSchema.size === 32 ? MIN_32_BIT_FLOAT : MIN_64_BIT_FLOAT,
-                      maximum: columnSchema.size === 32 ? MAX_32_BIT_FLOAT : MAX_64_BIT_FLOAT,
-                    },
-                  ];
-                }
-
-                if (columnSchema.dataType === 'geometry') {
-                  return [
-                    key,
-                    {
-                      type: 'object',
-                      $ref: 'https://geojson.org/schema/Geometry.json',
-                    },
-                  ];
-                }
-
-                if (columnSchema.dataType === 'integer') {
-                  return [
-                    key,
-                    {
-                      type: 'integer',
-                      minimum: BigInt(
-                        columnSchema.size === 8
-                          ? MIN_INT8
-                          : columnSchema.size === 16
-                            ? MIN_INT16
-                            : columnSchema.size === 32
-                              ? MIN_INT32
-                              : MIN_INT64
-                      ),
-                      maximum: BigInt(
-                        columnSchema.size === 8
-                          ? MAX_INT8
-                          : columnSchema.size === 16
-                            ? MAX_INT16
-                            : columnSchema.size === 32
-                              ? MAX_INT32
-                              : MAX_INT64
-                      ),
-                    },
-                  ];
-                }
-
-                if (columnSchema.dataType === 'interval') {
-                  return [
-                    key,
-                    {
-                      type: 'string',
-                      // ISO 8601 duration format
-                      pattern: `^P(\\d+Y)?(\\d+M)?(\\d+D)?(T(\\d+H)?(\\d+M)?(\\d+(\\.\\d+)?S)?)?$`,
-                      format: 'duration',
-                    },
-                  ];
-                }
-
-                if (columnSchema.dataType === 'numeric') {
-                  return [
-                    key,
-                    {
-                      type: 'string',
-                      // optional negative sign + digits before decimal + decimal + digits after decimal
-                      pattern: `^-?\\d{1,${columnSchema.precision - columnSchema.scale}}(\\.\\d{1,${columnSchema.scale}})?$`,
-                      format: 'decimal',
-                      'x-precision': columnSchema.precision,
-                      'x-scale': columnSchema.scale,
-                    },
-                  ];
-                }
-
-                if (columnSchema.dataType === 'text') {
-                  return [
-                    key,
-                    {
-                      type: 'string',
-                      maxLength: typeof columnSchema.length === 'number' ? columnSchema.length : undefined,
-                    },
-                  ];
-                }
-
-                if (columnSchema.dataType === 'time') {
-                  return [key, { type: 'string', format: 'time' }];
-                }
-
-                if (columnSchema.dataType === 'timestamp') {
-                  return [key, { type: 'string', format: 'date-time' }];
-                }
-              })
-              .filter((x) => !!x)
-          ),
-        };
-
-        // assume EPSG:4326 for geometries if no CRS is specified in the schema
-        const geometryCrs =
-          this.schema
-            .filter((entry) => entry.dataType === 'geometry')
-            .find(({ name }) => name === primaryGeometryKey)?.geometryCrs ?? 'EPSG:4326';
+        const properties = Object.fromEntries([
+          ...rawFeatureData.ids.entries(),
+          ...rawFeatureData.properties.entries(),
+        ]);
 
         return {
           path: pathAfterFeatureDir,
-          legendId: fileData[0],
+          legendId: rawFeature.legendId,
           primaryKeys: primaryKeyNames,
-          primaryGeometryKey,
-          schema,
+          primaryGeometryKey: rawFeatureData.metadata.geometryColumn?.name,
+          schema: this.schema.toJsonSchema(),
           properties,
-          crs: geometryCrs,
+          crs: rawFeatureData.metadata.crs,
         };
       });
+  }
+
+  /**
+   * Gets each feature inside the feature folder for the dataset in its raw form.
+   */
+  protected toRawFeatures() {
+    const featureDirPath = this.#datasetPath.join('.table-dataset', 'feature');
+    if (!featureDirPath.exists) {
+      return []; // a missing folder indicates no features
+    }
+
+    const featureFiles = featureDirPath.readDirectorySync({ recursive: true });
+    return featureFiles.filter((file) => file.isFile).map((file) => RawFeature.fromFile(file));
   }
 
   /**
@@ -390,6 +233,9 @@ export class TableDatasetV3 {
             }
           }
 
+          if (!feature.primaryGeometryKey) {
+            return;
+          }
           const _geometry = feature.properties[feature.primaryGeometryKey];
           if (_geometry === null || _geometry === undefined) {
             return;
@@ -538,40 +384,6 @@ const pathStructureSchema = z
       });
     }
   });
-
-const extensionCodec = new msgpack.ExtensionCodec();
-extensionCodec.register({
-  type: 71, // 'G'
-  encode: (data) => {
-    if (!isGeoJsonFeature(data)) {
-      throw new Error('Data is not a GeoJSON Feature object.');
-    }
-    return convertGeometryToWkb(data.geometry);
-  },
-  decode: (data) => {
-    const sfGeom = new GeoPackageGeometryData(data).getOrReadGeometry();
-    return FeatureConverter.toFeatureGeometry(sfGeom); // convert to GeoJSON geometry format
-  },
-});
-extensionCodec.register({
-  type: EXT_TIMESTAMP,
-  encode(input: unknown): Uint8Array | null {
-    if (input instanceof Temporal.Instant) {
-      const sec = input.epochMilliseconds / 1000;
-      const nsec = Number(input.epochNanoseconds % 1_000_000_000n); // we need the remainder nanoseconds after milliseconds
-      return encodeTimeSpecToTimestamp({ sec, nsec });
-    } else {
-      return null;
-    }
-  },
-  decode(data: Uint8Array): Temporal.Instant {
-    const timeSpec = decodeTimestampToTimeSpec(data);
-    const sec = BigInt(timeSpec.sec);
-    const nsec = BigInt(timeSpec.nsec);
-    const epochNanoseconds = sec * BigInt(1e9) + nsec;
-    return Temporal.Instant.fromEpochNanoseconds(epochNanoseconds);
-  },
-});
 
 // ensure that the temporal dates print nicely in the console
 (async () => {

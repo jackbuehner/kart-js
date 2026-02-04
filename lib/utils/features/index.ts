@@ -19,3 +19,15 @@ export type GeometryWithCrs = GeoJSON.Geometry & { crs?: { type: 'name'; propert
 export type FeatureWithId<G extends Geometry | null = Geometry, P = GeoJsonProperties> = Feature<G, P> & {
   id: string | number;
 };
+
+export type KartEnabledFeature<G extends Geometry | null = Geometry, P = GeoJsonProperties> = Feature<G, P> & {
+  id: string;
+  _kart: {
+    ids: { [k: string]: unknown };
+    path: string;
+    geometryColumn: {
+      id: string;
+      name: string;
+    };
+  };
+};

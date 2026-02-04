@@ -1,4 +1,3 @@
-import type z from 'zod';
 import type { GeometryWithCrs } from '../utils/features/index.ts';
 import {
   diffFeatureCollections,
@@ -9,7 +8,7 @@ import {
 import { Emitter } from '../utils/index.ts';
 import { checkFeatureCompliance } from './checkFeatureCompliance.ts';
 import type { KartDiff } from './diffs.js';
-import type { schemaEntrySchema } from './schemas/table-dataset-v3.ts';
+import type { Schema } from './Schema.ts';
 import { makeSerializeable, parse, stringify } from './serializer.ts';
 
 type FeatureCollection = { type: 'FeatureCollection'; features: FeatureWithId<GeometryWithCrs>[] };
@@ -25,16 +24,12 @@ export class WorkingFeatureCollection extends Emitter<{
 
   geometryType: Omit<'GeometryCollection', GeoJSON.Geometry['type']> | undefined;
 
-  #schema: z.infer<typeof schemaEntrySchema>[];
+  #schema: Schema;
   #datasetId: string;
   #primaryKeys: string[];
   #primaryGeometryKey: string;
 
-  constructor(
-    datasetId: string,
-    featureCollection: FeatureCollection,
-    schema: z.infer<typeof schemaEntrySchema>[]
-  ) {
+  constructor(datasetId: string, featureCollection: FeatureCollection, schema: Schema) {
     super();
 
     this.#datasetId = datasetId;

@@ -1,7 +1,7 @@
 import { Decimal } from 'decimal.js';
 import { Temporal } from 'temporal-polyfill';
 import z from 'zod';
-import type { schemaEntrySchema } from './schemas/table-dataset-v3.ts';
+import type { Schema } from './Schema.ts';
 
 /**
  * Checks whether a GeoJSON feature complies with the given Kart Table Dataset V3 schema.
@@ -13,7 +13,7 @@ import type { schemaEntrySchema } from './schemas/table-dataset-v3.ts';
  * Whenever a change is made in the working feature collection, this function should be
  * called to ensure that the feature remains compliant with the schema.
  */
-export function checkFeatureCompliance(feature: GeoJSON.Feature, schema: z.infer<typeof schemaEntrySchema>[]) {
+export function checkFeatureCompliance(feature: GeoJSON.Feature, schema: Schema) {
   const errors: string[] = [];
   const checkedProperties = new Set<string>();
 

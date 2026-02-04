@@ -35,8 +35,14 @@ const emitResult = program.emit();
 
 // --- Log type diagnostics ---
 const allDiagnostics = ts.getPreEmitDiagnostics(program).concat(emitResult.diagnostics);
+const formatHost: ts.FormatDiagnosticsHost = {
+  getCanonicalFileName: (path) => path,
+  getCurrentDirectory: ts.sys.getCurrentDirectory,
+  getNewLine: () => ts.sys.newLine,
+};
 allDiagnostics.forEach((d) => {
-  console.error(ts.flattenDiagnosticMessageText(d.messageText, '\n'));
+  const message = ts.formatDiagnosticsWithColorAndContext(allDiagnostics, formatHost);
+  console.error(message);
 });
 
 if (allDiagnostics.length > 0) {

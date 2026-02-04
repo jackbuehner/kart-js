@@ -50,9 +50,12 @@ export class Path {
     return dirParts[dirParts.length - 1];
   }
 
-  get parentPath(): Path {
+  get parentPath(): Path | null {
     const dirParts = this.fullPath.split('/');
     const parentParts = dirParts.slice(0, dirParts.length - 1);
+    if (parentParts.length === 0) {
+      return null;
+    }
     return new Path(parentParts.join('/'));
   }
 

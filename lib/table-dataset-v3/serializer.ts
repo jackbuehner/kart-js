@@ -1,3 +1,4 @@
+import { sha256 } from '@noble/hashes/sha2.js';
 import * as JSON from '@ungap/raw-json';
 import * as devalue from 'devalue';
 import { Temporal } from 'temporal-polyfill';
@@ -80,8 +81,36 @@ export function makeSerializeable<T extends object>(data: T) {
   }) as T & { toJSON: () => string };
 }
 
+/**
+ * Hashes a string or binary data using SHA-256 and returns the hash as a hex string
+ * truncated to the first 160 bits (same as git hashes).
+ *
+ * This is the JavaScript implementation of the same hashing algorithm used by Kart in Python.
+ * @see https://github.com/koordinates/kart/blob/eae35e1d06273d9cd2638cefd5fdc50250971aa4/kart/serialise_util.py#L80-L83
+ *
+ * @param data The data to hash, provided as a string, Uint8Array, or ArrayBuffer. It will be converted to an ArrayBuffer if it is a string or Uint8Array.
+ * @returns The hex string of the hash, truncated to the first 160 bits (20 bytes) (40 characters).
+ */
+export function hexHash(data: string | Uint8Array | ArrayBuffer) {
+  let bytes: Uint8Array<ArrayBuffer>;
+  if (data instanceof Uint8Array && data.buffer instanceof ArrayBuffer) {
+    bytes = data as Uint8Array<ArrayBuffer>;
+  } else if (data instanceof Uint8Array) {
+    bytes = new Uint8Array(data);
+  } else if (data instanceof ArrayBuffer) {
+    bytes = new Uint8Array(data);
+  } else if (typeof data === 'string') {
+    bytes = new Uint8Array(Uint8Array.fromHex(data));
+  } else {
+    throw new TypeError('Data must be a string, Uint8Array, or ArrayBuffer');
+  }
+
+  return sha256(bytes).slice(0, 20).toHex();
+}
+
 export default {
   stringify,
   parse,
   serializeJson,
+  hexHash,
 };

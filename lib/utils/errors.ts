@@ -11,3 +11,10 @@ export class FileReadError extends Error {
     this.name = 'FileReadError';
   }
 }
+
+export class InvalidFileContentsError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvalidFileContentsError';
+  }
+}

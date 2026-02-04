@@ -1,7 +1,8 @@
 import * as msgpack from '@msgpack/msgpack';
 import z from 'zod';
-import { FileNotFoundError } from '../utils/errors.ts';
+import { FileNotFoundError, InvalidFileContentsError } from '../utils/errors.ts';
 import { Enumerable, type Path } from '../utils/index.ts';
+import serializer from './serializer.ts';
 
 /**
  * A legend consists of primary key column IDs and non-primary key column IDs.
@@ -34,14 +35,37 @@ export class Legend {
   /**
    * Converts the column IDs for a lagend into a Legend instance.
    *
-   * @param id - The legend ID.
    * @param primaryKeyIds - An array of primary key column IDs. If there are no primary keys, this should be an empty array.
    * @param nonPrimaryKeyIds - An array of non-primary key column IDs. If there are no non-primary keys, this should be an empty array.
+   * @param id - The first 20 bytes of the sha256 hash of the legend contents,
+   *             represented as a hex string. This is used to uniquely identify the
+   *             legend and should be the same as the legend file name.
    */
-  constructor(id: string, primaryKeyIds: string[], nonPrimaryKeyIds: string[]) {
-    this.id = id;
+  constructor(
+    primaryKeyIds: string[],
+    nonPrimaryKeyIds: string[],
+    id?: string,
+    { skipValidation = false } = {}
+  ) {
     this.primaryKeyIds = primaryKeyIds;
     this.nonPrimaryKeyIds = nonPrimaryKeyIds;
+
+    if (skipValidation && !id) {
+      throw new Error('Cannot skip validation without providing an id');
+    } else if (skipValidation) {
+      this.id = id!;
+    } else {
+      const buffer = this.toBuffer([primaryKeyIds, nonPrimaryKeyIds]);
+      const hash = serializer.hexHash(buffer);
+      this.id = hash;
+
+      // if provided, ensure that the id matches the hash of the contents
+      if (id && hash !== id) {
+        throw new InvalidFileContentsError(
+          `Legend has invalid contents: expected SHA-256 hash ${id} but got ${hash}`
+        );
+      }
+    }
   }
 
   /**
@@ -61,10 +85,56 @@ export class Legend {
   }
 
   /**
+   * Encodes the legend into an ArrayBuffer using MessagePack encoding.
+   *
+   * To convert the ArrayBuffer back into a Legend instance, use `Legend.fromBuffer(buffer)`.
+   *
+   * @returns An ArrayBuffer containing the MessagePack-encoded legend data.
+   */
+  toBuffer(): ArrayBuffer;
+  toBuffer(data: [string[], string[]]): ArrayBuffer;
+  toBuffer(data = [this.primaryKeyIds, this.nonPrimaryKeyIds] as [string[], string[]]) {
+    const encoded = msgpack.encode([this.primaryKeyIds, this.nonPrimaryKeyIds]);
+    return encoded.buffer.slice(encoded.byteOffset, encoded.byteOffset + encoded.byteLength);
+  }
+
+  /**
+   * Creates a Legend instance from a MessagePack-encoded ArrayBuffer.
+   *
+   * @throws {RangeError} If the buffer cannot be decoded or is in an invalid format.
+   * @throws {TypeError} If the buffer is not actually an ArrayBuffer or Uint8Array.
+   * @throws {msgpack.DecodeError} If the buffer contents cannot be decoded as MessagePack.
+   * @throws {InvalidFileContentsError} If the hash of the buffer contents does not match the provided ID (if ID is provided).
+   * @throws {z.ZodError} If the decoded contents do not match the expected array structure.
+   *
+   * @param buffer - The MessagePack-encoded ArrayBuffer containing the legend data.
+   * @param id - The expected legend ID (hash). If provided, the function will verify that the hash of the buffer contents matches this ID.
+   *             If the hash does not match, an InvalidFileContentsError will be thrown.
+   *             If not provided, no hash verification will be performed.
+   */
+  static fromBuffer(buffer: ArrayBuffer | Uint8Array, id?: string) {
+    if (buffer.byteLength === 0) {
+      throw new RangeError(`Failed to read legend from buffer: buffer is empty`);
+    }
+
+    const hash = serializer.hexHash(buffer);
+    if (id && hash !== id) {
+      throw new InvalidFileContentsError(
+        `Legend buffer has invalid contents: expected SHA-256 hash ${id} but got ${hash}`
+      );
+    }
+
+    const decoded = msgpack.decode(new Uint8Array(buffer));
+    const parsed = legendSchema.parse(decoded);
+    return new Legend(parsed.primaryKeyColumns, parsed.nonPrimaryKeyColumns, hash);
+  }
+
+  /**
    * Creates a Legend instance from a legend file at the given path.
    *
    * @throws {FileNotFoundError} If the file does not exist at the specified path.
    * @throws {import('../utils/errors.ts').FileReadError} If the file cannot be read.
+   * @throws {InvalidFileContentsError} If the hash of the file contents does not match the file name.
    * @throws {RangeError} If the file cannot be read or is in an invalid format.
    * @throws {msgpack.DecodeError} If the file contents cannot be decoded as MessagePack.
    * @throws {z.ZodError} If the decoded contents do not match the expected array structure.
@@ -81,10 +151,16 @@ export class Legend {
       throw new RangeError(`Failed to read legend file at path: ${filePath}`);
     }
 
-    const decoded = msgpack.decode(buffer);
-    const parsed = legendSchema.parse(decoded);
+    // the file name should be the same as the hash of the contents
     const id = filePath.name;
-    return new Legend(id, parsed.primaryKeyColumns, parsed.nonPrimaryKeyColumns);
+    const hash = serializer.hexHash(buffer);
+    if (id !== hash) {
+      throw new InvalidFileContentsError(
+        `Legend file at path ${filePath} has invalid contents: expected SHA-256 hash ${id} but got ${hash}`
+      );
+    }
+
+    return Legend.fromBuffer(buffer, id);
   }
 }
 
