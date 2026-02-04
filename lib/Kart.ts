@@ -65,13 +65,17 @@ export class Kart {
     return resolveRef({ fs, dir: this.#repoDir.absolute, ref: 'HEAD' });
   }
 
-  async destroy() {
+  async [Symbol.asyncDispose]() {
     // unregister all listeners
     for await (const [name, value] of this) {
       value.dataset.working.off();
     }
 
     await fs.rm(this.#repoDir.absolute, { recursive: true, force: true });
+  }
+
+  dispose() {
+    return this[Symbol.asyncDispose]();
   }
 
   /**
