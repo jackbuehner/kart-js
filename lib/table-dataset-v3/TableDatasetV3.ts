@@ -1,9 +1,7 @@
 import * as msgpack from '@msgpack/msgpack';
 import { decodeTimestampToTimeSpec, encodeTimeSpecToTimestamp, EXT_TIMESTAMP } from '@msgpack/msgpack';
-import { GeometryData } from '@ngageoint/geopackage';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import path from 'node:path';
-import { inspect, type InspectOptions } from 'node:util';
+import { GeoPackageGeometryData } from '@ngageoint/geopackage/dist/lib/geom/geoPackageGeometryData.js';
+import { FeatureConverter } from '@ngageoint/simple-features-geojson-js';
 import { Temporal } from 'temporal-polyfill';
 import z from 'zod';
 import type { FeatureWithId } from '../utils/features/index.ts';
@@ -13,13 +11,15 @@ import {
   reprojectFeature,
   type GeometryWithCrs,
 } from '../utils/features/index.ts';
+import { Path } from '../utils/index.ts';
 import { decodeRawFeatures } from './decodeRawFeatures.ts';
-import { legendSchema, schemaEntrySchema } from './schemas/table-dataset-v3.ts';
+import { Legend, Legends } from './Legend.ts';
+import { schemaEntrySchema } from './schemas/table-dataset-v3.ts';
 import { makeSerializeable } from './serializer.ts';
 import { WorkingFeatureCollection } from './WorkingFeatureCollection.ts';
 
 export class TableDatasetV3 {
-  #datasetPath: string;
+  #datasetPath: Path;
 
   readonly type = 'table-dataset-v3';
   readonly id: string;
@@ -27,16 +27,16 @@ export class TableDatasetV3 {
   readonly description?: string;
   readonly pathStructure: z.infer<typeof pathStructureSchema>;
   readonly schema: z.infer<typeof schemaEntrySchema>[];
-  readonly legends: Record<string, z.infer<typeof legendSchema>>;
+  readonly legends: Legends;
 
   readonly working: WorkingFeatureCollection;
 
-  constructor(repoPath: string, id: string) {
+  constructor(repoPath: Path, id: string) {
     if (!TableDatasetV3.isValidDataset(repoPath, id)) {
       throw new Error(`Dataset with id "${id}" does not exist or is not a valid table dataset v3.`);
     }
 
-    this.#datasetPath = path.join(repoPath, id);
+    this.#datasetPath = repoPath.join(id);
     this.id = id;
 
     try {
@@ -56,37 +56,38 @@ export class TableDatasetV3 {
     this.working = new WorkingFeatureCollection(this.id, this.toFeatureCollection(), this.schema);
   }
 
-  static isValidDataset(repoDir: string, id: string, validateContents = false) {
-    const folderExists = readdirSync(repoDir).findIndex((file) => file === id) !== -1;
+  static isValidDataset(repoDir: Path, id: string, validateContents = false) {
+    const folderExists = repoDir.readDirectorySync().findIndex((item) => item.name === id) !== -1;
     if (!folderExists) {
       return false;
     }
 
     // table datasets MUST have a .table-dataset folder inside their root folder that contains at least the feature and meta folders
-    const tableDatasetPath = path.join(repoDir, id, '.table-dataset');
-    if (!existsSync(tableDatasetPath)) {
+    const tableDatasetPath = repoDir.join(id, '.table-dataset');
+    if (!tableDatasetPath.exists) {
       return false;
     }
 
-    const tableDatasetContents = readdirSync(tableDatasetPath);
-    const hasMetaFolder = tableDatasetContents.findIndex((file) => file === 'meta') !== -1;
+    const tableDatasetContents = tableDatasetPath.readDirectorySync();
+    const hasMetaFolder = tableDatasetContents.findIndex((item) => item.name === 'meta') !== -1;
     if (!hasMetaFolder) {
       return false;
     }
 
-    const metaFolderContents = readdirSync(path.join(tableDatasetPath, 'meta'));
-    const hasTitleFile = metaFolderContents.findIndex((file) => file === 'title') !== -1;
-    const hasSchemaFile = metaFolderContents.findIndex((file) => file === 'schema.json') !== -1;
-    const hasPathStructureFile = metaFolderContents.findIndex((file) => file === 'path-structure.json') !== -1;
+    const metaFolderContents = tableDatasetPath.join('meta').readDirectorySync();
+    const hasTitleFile = metaFolderContents.findIndex((file) => file.name === 'title') !== -1;
+    const hasSchemaFile = metaFolderContents.findIndex((file) => file.name === 'schema.json') !== -1;
+    const hasPathStructureFile =
+      metaFolderContents.findIndex((file) => file.name === 'path-structure.json') !== -1;
     if (!hasTitleFile || !hasSchemaFile || !hasPathStructureFile) {
       return false;
     }
 
-    const hasLegendFolder = metaFolderContents.findIndex((file) => file === 'legend') !== -1;
+    const hasLegendFolder = metaFolderContents.findIndex((file) => file.name === 'legend') !== -1;
     if (!hasLegendFolder) {
       return false;
     }
-    const hasAtLeastOneLegendFile = readdirSync(path.join(tableDatasetPath, 'meta', 'legend')).length > 0;
+    const hasAtLeastOneLegendFile = tableDatasetPath.join('meta', 'legend').readDirectorySync().length > 0;
     if (!hasAtLeastOneLegendFile) {
       return false;
     }
@@ -103,37 +104,34 @@ export class TableDatasetV3 {
     }
   }
 
-  private static getValidatedContents(repoDir: string, id: string) {
+  private static getValidatedContents(repoDir: Path, id: string) {
     if (!TableDatasetV3.isValidDataset(repoDir, id, false)) {
       return;
     }
 
-    const titleFilePath = path.join(repoDir, id, '.table-dataset', 'meta', 'title');
-    const title = readFileSync(titleFilePath, { encoding: 'utf-8' }).trim();
+    const titleFilePath = repoDir.join(id, '.table-dataset', 'meta', 'title');
+    const title = titleFilePath.readFileSync({ encoding: 'utf-8' }).trim();
 
-    const descriptionFilePath = path.join(repoDir, id, '.table-dataset', 'meta', 'description');
+    const descriptionFilePath = repoDir.join(id, '.table-dataset', 'meta', 'description');
     let description: string | undefined = undefined;
-    if (existsSync(descriptionFilePath)) {
-      description = readFileSync(descriptionFilePath, { encoding: 'utf-8' }).trim();
+    if (descriptionFilePath.exists && descriptionFilePath.isFile) {
+      description = descriptionFilePath.readFileSync({ encoding: 'utf-8' }).trim();
     }
 
-    const pathStructurePath = path.join(repoDir, id, '.table-dataset', 'meta', 'path-structure.json');
-    const pathStructureRaw = readFileSync(pathStructurePath, { encoding: 'utf-8' });
+    const pathStructurePath = repoDir.join(id, '.table-dataset', 'meta', 'path-structure.json');
+    const pathStructureRaw = pathStructurePath.readFileSync({ encoding: 'utf-8' });
     const pathStructure = pathStructureSchema.parse(JSON.parse(pathStructureRaw));
 
-    const schemaFilePath = path.join(repoDir, id, '.table-dataset', 'meta', 'schema.json');
-    const schemaRaw = readFileSync(schemaFilePath, { encoding: 'utf-8' });
+    const schemaFilePath = repoDir.join(id, '.table-dataset', 'meta', 'schema.json');
+    const schemaRaw = schemaFilePath.readFileSync({ encoding: 'utf-8' });
     const schema = z.array(schemaEntrySchema).parse(JSON.parse(schemaRaw));
 
-    const legendDirPath = path.join(repoDir, id, '.table-dataset', 'meta', 'legend');
-    const legendFiles = readdirSync(legendDirPath);
-    const legends: Record<string, z.infer<typeof legendSchema>> = {};
+    const legendDirPath = repoDir.join(id, '.table-dataset', 'meta', 'legend');
+    const legendFiles = legendDirPath.readDirectorySync();
+    const legends = new Legends();
     for (const legendFile of legendFiles) {
-      const legendFilePath = path.join(legendDirPath, legendFile);
-      const legendRaw = readFileSync(legendFilePath);
-      const legendData = msgpack.decode(new Uint8Array(legendRaw), { extensionCodec, useBigInt64: true });
-      const legendName = path.parse(legendFile).name;
-      legends[legendName] = legendSchema.parse(legendData);
+      const legend = Legend.fromFile(legendFile);
+      legends.add(legend);
     }
 
     return {
@@ -148,61 +146,62 @@ export class TableDatasetV3 {
   /**
    * Gets each feature inside the feature folder for the dataset
    * in its raw form.
+   *
+   * Caution: Values have been mapped to their respective column names, but they have not been validated.
+   * Clients should use `toDecodedFeatures()` to get fully validated features.
    */
   protected discoverRawFeatures() {
-    const featureDirPath = path.join(this.#datasetPath, '.table-dataset', 'feature');
-    if (!existsSync(featureDirPath)) {
+    const featureDirPath = this.#datasetPath.join('.table-dataset', 'feature');
+    if (!featureDirPath.exists) {
       return []; // a missing folder indicates no features
     }
 
-    const featureFiles = readdirSync(featureDirPath, { recursive: true, withFileTypes: true });
+    const featureFiles = featureDirPath.readDirectorySync({ recursive: true });
 
     return featureFiles
-      .filter((file) => file.isFile())
+      .filter((file) => file.isFile)
       .map((file) => {
-        const filePath = path.join(file.parentPath, file.name);
-        const fileContents = readFileSync(filePath);
-        const fileData = msgpack.decode(new Uint8Array(fileContents), { extensionCodec, useBigInt64: true });
+        const fileContents = file.readFileSync();
+        const fileData = msgpack.decode(fileContents, { extensionCodec, useBigInt64: true });
 
         if (!Array.isArray(fileData) || fileData.length !== 2) {
-          throw new Error(`Feature file at path "${filePath}" is not a valid feature.`);
+          throw new Error(`Feature file at path "${file}" is not a valid feature.`);
         }
 
         if (typeof fileData[0] !== 'string') {
-          throw new Error(`Feature file at path "${filePath}" does not have a valid legend id.`);
+          throw new Error(`Feature file at path "${file}" does not have a valid legend id.`);
         }
 
         if (!Array.isArray(fileData[1])) {
-          throw new Error(`Feature file at path "${filePath}" does not have valid feature data.`);
+          throw new Error(`Feature file at path "${file}" does not have valid feature data.`);
         }
 
         // the file name is a base64-encoed msgpack-encoded array of the primary key values (in order)
-        const msgpackEncodedName = Buffer.from(path.parse(file.name).name, 'base64');
+        const msgpackEncodedName = Buffer.from(file.name, 'base64');
         const primaryKeyData = msgpack.decode(msgpackEncodedName) as unknown[];
 
         // the other values are stored directly in the data array
         const nonPrimaryKeyData = fileData[1] as unknown[];
 
-        const pathAfterFeatureDir = path.relative(featureDirPath, filePath).replaceAll(path.sep, '/');
+        const pathAfterFeatureDir = featureDirPath.relativeTo(file);
 
-        const legend = this.legends[fileData[0]];
+        const legend = this.legends.find((legend) => legend.id === fileData[0]);
         if (!legend) {
           throw new Error(`Legend with id "${fileData[0]}" not found in dataset legends.`);
         }
 
         // use the legend to construct the actual data object with proper column names
-        // TODO: deserialize data types properly based on schema (e..g blob, decimal)... maybe modify msgpack decoder to handle this?
         const properties: Record<string, unknown> = {};
-        legend.primaryKeyColumns.forEach((columnId, index) => {
+        legend.columnIds.forEach(({ columnId, isPrimary, dataIndex }) => {
           const columnName = this.schema.find(({ id }) => id === columnId)?.name || columnId;
-          properties[columnName] = primaryKeyData[index];
-        });
-        legend.nonPrimaryKeyColumns.forEach((columnId, index) => {
-          const columnName = this.schema.find(({ id }) => id === columnId)?.name || columnId;
-          properties[columnName] = nonPrimaryKeyData[index];
+          if (isPrimary) {
+            properties[columnName] = primaryKeyData[dataIndex];
+          } else {
+            properties[columnName] = nonPrimaryKeyData[dataIndex];
+          }
         });
 
-        const primaryKeyNames = legend.primaryKeyColumns.map((columnId) => {
+        const primaryKeyNames = legend.primaryKeyIds.map((columnId) => {
           return this.schema.find(({ id }) => id === columnId)?.name || columnId;
         });
 
@@ -221,8 +220,8 @@ export class TableDatasetV3 {
           $schema: 'https://json-schema.org/draft/2020-12/schema' as const,
           type: 'object' as const,
           properties: Object.fromEntries(
-            [...legend.primaryKeyColumns, ...legend.nonPrimaryKeyColumns]
-              .map((columnId): [string, JsonSchemaDataTypes] | undefined => {
+            legend.columnIds
+              .map(({ columnId }): [string, JsonSchemaDataTypes] | undefined => {
                 const columnSchema = this.schema.find(({ id }) => id === columnId);
                 if (!columnSchema) {
                   return;
@@ -550,8 +549,8 @@ extensionCodec.register({
     return convertGeometryToWkb(data.geometry);
   },
   decode: (data) => {
-    const geom = new GeometryData(data);
-    return geom.toGeoJSON();
+    const sfGeom = new GeoPackageGeometryData(data).getOrReadGeometry();
+    return FeatureConverter.toFeatureGeometry(sfGeom); // convert to GeoJSON geometry format
   },
 });
 extensionCodec.register({
@@ -575,32 +574,38 @@ extensionCodec.register({
 });
 
 // ensure that the temporal dates print nicely in the console
+(async () => {
+  if (process.env.TARGET === 'node') {
+    const { inspect } = await import('node:util');
+    type InspectOptions = Parameters<typeof inspect>[1];
 
-(Temporal.PlainDate.prototype as any)[inspect.custom] = function (
-  this: Temporal.PlainDate,
-  depth: number,
-  opts: InspectOptions
-) {
-  return (opts as any).stylize(this.toString(), 'date');
-};
-(Temporal.Instant.prototype as any)[inspect.custom] = function (
-  this: Temporal.Instant,
-  depth: number,
-  opts: InspectOptions
-) {
-  return (opts as any).stylize(this.toString(), 'date');
-};
-(Temporal.PlainTime.prototype as any)[inspect.custom] = function (
-  this: Temporal.PlainTime,
-  depth: number,
-  opts: InspectOptions
-) {
-  return (opts as any).stylize(this.toString(), 'date');
-};
-(Temporal.PlainDateTime.prototype as any)[inspect.custom] = function (
-  this: Temporal.PlainDateTime,
-  depth: number,
-  opts: InspectOptions
-) {
-  return (opts as any).stylize(this.toString(), 'date');
-};
+    (Temporal.PlainDate.prototype as any)[inspect.custom] = function (
+      this: Temporal.PlainDate,
+      depth: number,
+      opts: InspectOptions
+    ) {
+      return (opts as any).stylize(this.toString(), 'date');
+    };
+    (Temporal.Instant.prototype as any)[inspect.custom] = function (
+      this: Temporal.Instant,
+      depth: number,
+      opts: InspectOptions
+    ) {
+      return (opts as any).stylize(this.toString(), 'date');
+    };
+    (Temporal.PlainTime.prototype as any)[inspect.custom] = function (
+      this: Temporal.PlainTime,
+      depth: number,
+      opts: InspectOptions
+    ) {
+      return (opts as any).stylize(this.toString(), 'date');
+    };
+    (Temporal.PlainDateTime.prototype as any)[inspect.custom] = function (
+      this: Temporal.PlainDateTime,
+      depth: number,
+      opts: InspectOptions
+    ) {
+      return (opts as any).stylize(this.toString(), 'date');
+    };
+  }
+})();

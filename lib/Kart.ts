@@ -1,20 +1,28 @@
-import { existsSync } from 'fs';
-import fs from 'fs/promises';
-import git from 'isomorphic-git';
-import http from 'isomorphic-git/http/node';
-import path from 'path';
+import { existsSync } from '@zenfs/core';
+import * as fs from '@zenfs/core/promises';
+import { clone, resolveRef } from 'isomorphic-git';
+import type { KartDiff } from './table-dataset-v3/diffs.js';
 import { TableDatasetV3 } from './table-dataset-v3/TableDatasetV3.ts';
+import { Path } from './utils/index.ts';
 
 interface KartCloneOptions {
-  corsProxy?: Parameters<typeof git.clone>[0]['corsProxy'];
-  onProgress?: Parameters<typeof git.clone>[0]['onProgress'];
+  corsProxy?: Parameters<typeof clone>[0]['corsProxy'];
+  onProgress?: Parameters<typeof clone>[0]['onProgress'];
 }
 
 export class Kart {
-  #repoDir: string;
+  #repoDir: Path;
 
-  private constructor(repoDir: string) {
-    this.#repoDir = repoDir;
+  protected constructor(repoDir: string | Path) {
+    this.#repoDir = repoDir instanceof Path ? repoDir : new Path(repoDir);
+  }
+
+  protected static inferRepoNameFromUrl(url: string): string {
+    const repoNameMatch = url.match(/\/([^\/]+)(\.git)?$/);
+    if (!repoNameMatch) {
+      throw new Error(`Could not infer repository name from URL: ${url}. Please provide a directory name.`);
+    }
+    return repoNameMatch[1];
   }
 
   static async pull(
@@ -24,11 +32,7 @@ export class Kart {
   ): Promise<Kart> {
     // infer dir name from repo url if not provided
     if (!dir) {
-      const repoNameMatch = url.match(/\/([^\/]+)(\.git)?$/);
-      if (!repoNameMatch) {
-        throw new Error(`Could not infer directory name from URL: ${url}. Please provide a directory name.`);
-      }
-      dir = path.join(process.cwd(), repoNameMatch[1]);
+      dir = Kart.inferRepoNameFromUrl(url);
     }
 
     // delete existing directory
@@ -36,7 +40,15 @@ export class Kart {
       await fs.rm(dir, { recursive: true, force: true });
     }
 
-    await git.clone({
+    const http = await (async () => {
+      if (process.env.TARGET === 'node') {
+        return await import('isomorphic-git/http/node');
+      } else {
+        return await import('isomorphic-git/http/web');
+      }
+    })();
+
+    await clone({
       fs,
       http,
       dir,
@@ -50,7 +62,7 @@ export class Kart {
   }
 
   async getCurrentCommit() {
-    return git.resolveRef({ fs, dir: this.#repoDir, ref: 'HEAD' });
+    return resolveRef({ fs, dir: this.#repoDir.absolute, ref: 'HEAD' });
   }
 
   async destroy() {
@@ -59,7 +71,7 @@ export class Kart {
       value.dataset.working.off();
     }
 
-    await fs.rm(this.#repoDir, { recursive: true, force: true });
+    await fs.rm(this.#repoDir.absolute, { recursive: true, force: true });
   }
 
   /**
@@ -69,12 +81,20 @@ export class Kart {
     return TableDatasetV3.isValidDataset(this.#repoDir, name);
   }
 
+  private datatsets = new Map<string, TableDatasetV3>();
+
   get(name: string) {
     if (!this.has(name)) {
       throw new Error(`Dataset with name "${name}" does not exist or is not a valid table dataset v3.`);
     }
 
-    return new TableDatasetV3(this.#repoDir, name);
+    if (this.datatsets.has(name)) {
+      return this.datatsets.get(name)!;
+    }
+
+    const newDataset = new TableDatasetV3(this.#repoDir, name);
+    this.datatsets.set(name, newDataset);
+    return newDataset;
   }
 
   /**
@@ -82,9 +102,9 @@ export class Kart {
    * dataset in the repository.
    */
   private async *entries() {
-    const filesOrFolders = await fs.readdir(this.#repoDir);
+    const filesOrFolders = await fs.readdir(this.#repoDir.absolute);
     const folders = filesOrFolders.filter(async (fileOrFolder) => {
-      const stat = await fs.stat(path.join(this.#repoDir, fileOrFolder));
+      const stat = await fs.stat(Path.join(this.#repoDir.absolute, fileOrFolder).absolute);
       return stat.isDirectory();
     });
 

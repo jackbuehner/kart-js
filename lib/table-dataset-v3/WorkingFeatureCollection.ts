@@ -8,6 +8,7 @@ import {
 } from '../utils/features/index.ts';
 import { Emitter } from '../utils/index.ts';
 import { checkFeatureCompliance } from './checkFeatureCompliance.ts';
+import type { KartDiff } from './diffs.js';
 import type { schemaEntrySchema } from './schemas/table-dataset-v3.ts';
 import { makeSerializeable, parse, stringify } from './serializer.ts';
 

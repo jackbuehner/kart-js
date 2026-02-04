@@ -21,11 +21,14 @@ declare namespace KartDiff {
 
       export type Diff = Record<
         string,
-        {
-          meta?: MetaChanges;
-          feature?: Change[];
-        }
+        | {
+            meta?: MetaChanges;
+            feature?: Change[];
+          }
+        | undefined
       >;
     }
   }
 }
+
+export { KartDiff };

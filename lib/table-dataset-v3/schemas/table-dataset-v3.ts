@@ -182,9 +182,3 @@ export const schemaEntrySchema = z.discriminatedUnion('dataType', [
   timestampCol,
   geometryCol,
 ]);
-
-export const legendSchema = z.tuple([z.string().array(), z.string().array()]).transform((array) => {
-  const primaryKeyColumns = array[0];
-  const nonPrimaryKeyColumns = array[1];
-  return { primaryKeyColumns, nonPrimaryKeyColumns };
-});

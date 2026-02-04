@@ -1,0 +1,13 @@
+diff --git a/node_modules/@zenfs/core/dist/backends/passthrough.js b/node_modules/@zenfs/core/dist/backends/passthrough.js
+index 27e0fee..141c04c 100644
+--- a/node_modules/@zenfs/core/dist/backends/passthrough.js
++++ b/node_modules/@zenfs/core/dist/backends/passthrough.js
+@@ -306,7 +306,7 @@ const _Passthrough = {
+         prefix: { type: 'string', required: true },
+     },
+     create({ fs, prefix }) {
+-        return new PassthroughFS(fs, resolve(prefix));
++        return new PassthroughFS(fs, prefix);
+     },
+ };
+ /**

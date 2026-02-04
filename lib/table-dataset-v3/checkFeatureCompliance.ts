@@ -25,7 +25,7 @@ export function checkFeatureCompliance(feature: GeoJSON.Feature, schema: z.infer
     .filter(({ primaryKeyIndex }) => typeof primaryKeyIndex === 'number' && primaryKeyIndex >= 0)
     .map(({ name }) => name);
   const geometryColumns = schema.filter(({ dataType }) => dataType === 'geometry').map(({ name }) => name);
-  const primaryGeometryKey = geometryColumns.includes('geom')
+  const primaryGeometryKey = geometryColumns.includes('geometry')
     ? 'geometry'
     : geometryColumns.includes('geom')
       ? 'geom'

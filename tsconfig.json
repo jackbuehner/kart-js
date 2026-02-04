@@ -14,6 +14,8 @@
     "skipLibCheck": true,
     "outDir": "dist",
     "rootDir": "lib",
+    "emitDeclarationOnly": true,
+    "isolatedModules": true
   },
   "include": [
     "lib/**/*"
