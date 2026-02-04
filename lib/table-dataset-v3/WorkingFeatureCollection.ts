@@ -1,17 +1,17 @@
-import type { GeometryWithCrs } from '../utils/features/index.ts';
+import type { GeometryWithCrs, KartEnabledFeature, KartFeatureCollection } from '../utils/features/index.ts';
 import {
   diffFeatureCollections,
   hasFeatureId,
   isGeoJsonFeature,
-  type FeatureWithId,
+  isKartEnabledFeature,
 } from '../utils/features/index.ts';
 import { Emitter } from '../utils/index.ts';
-import { checkFeatureCompliance } from './checkFeatureCompliance.ts';
 import type { KartDiff } from './diffs.js';
+import { AggregateValidationError, Feature } from './Feature.ts';
 import type { Schema } from './Schema.ts';
 import { makeSerializeable, parse, stringify } from './serializer.ts';
 
-type FeatureCollection = { type: 'FeatureCollection'; features: FeatureWithId<GeometryWithCrs>[] };
+type FeatureCollection = KartFeatureCollection;
 
 export class WorkingFeatureCollection extends Emitter<{
   'feature:added': { featureId: string | number; feature: GeoJSON.Feature };
@@ -95,7 +95,7 @@ export class WorkingFeatureCollection extends Emitter<{
           }
 
           const oldFeature = target[index];
-          const feature = value as FeatureWithId;
+          const feature = value as KartFeatureCollection['features'][number];
           const isChanged = stringify(oldFeature) !== stringify(feature);
           if (!isChanged) {
             return true;
@@ -128,9 +128,9 @@ export class WorkingFeatureCollection extends Emitter<{
           }
 
           const maybeFeature = Reflect.get(target, prop, receiver);
-          const feature = isGeoJsonFeature(maybeFeature) && hasFeatureId(maybeFeature) ? maybeFeature : null;
+          const feature = isKartEnabledFeature(maybeFeature) ? maybeFeature : null;
           if (!feature) {
-            throw new TypeError(`Feature at index ${index} is not a valid GeoJSON Feature.`);
+            throw new TypeError(`Feature at index ${index} is not a valid Kart-enabled GeoJSON Feature.`);
           }
 
           /**
@@ -147,7 +147,7 @@ export class WorkingFeatureCollection extends Emitter<{
            * @param cache - A WeakMap to cache already proxied objects.
            */
           function createFeatureProxy(
-            featureToCheck: FeatureWithId,
+            featureToCheck: KartEnabledFeature<GeometryWithCrs>,
             objToProxy: object = featureToCheck,
             cache = new WeakMap<object, any>()
           ) {
@@ -284,7 +284,7 @@ export class WorkingFeatureCollection extends Emitter<{
    * @param properties - The properties to set on the feature.
    * @param merge - Whether to merge the new properties with the existing ones (default: true).
    */
-  updateProperties(featureId: string | number, properties: Record<string, unknown>, merge = true) {
+  updateProperties(featureId: string, properties: Record<string, unknown>, merge = true) {
     const index = this.getIndex(featureId);
     if (index === -1) {
       throw new Error(`Feature with ID "${featureId}" not found.`);
@@ -313,6 +313,7 @@ export class WorkingFeatureCollection extends Emitter<{
         id: featureId,
         geometry: this.#featureCollection.features[index].geometry,
         properties: newProperties,
+        _kart: this.#featureCollection.features[index]._kart,
       },
       this.#schema
     );
@@ -368,7 +369,7 @@ export class WorkingFeatureCollection extends Emitter<{
    *
    * @param feature - The feature to add.
    */
-  add(feature: FeatureWithId) {
+  add(feature: FeatureCollection['features'][number]) {
     if (feature.id === undefined || feature.id === null) {
       throw new Error('Feature must have an ID to be added.');
     }
@@ -571,5 +572,26 @@ export class WorkingFeatureCollection extends Emitter<{
       },
       'kart.diff/v1+hexwkb': makeSerializeable(diff),
     };
+  }
+}
+
+function checkFeatureCompliance(feature: KartEnabledFeature<GeometryWithCrs>, schema: Schema) {
+  try {
+    Feature.fromGeoJSON(feature, schema);
+    return { valid: true, errors: [] };
+  } catch (error) {
+    if (error instanceof AggregateValidationError) {
+      return {
+        valid: false,
+        errors: Array.from(error.errors).map(([key, error]) => {
+          const newError = new Error(`Property "${key}": ${error.map((e) => e.message).join('; ')}`);
+          newError.name = error[0]?.name || 'ValidationError';
+          newError.stack = error[0]?.stack;
+          newError.cause = error[0]?.cause;
+          return newError;
+        }),
+      };
+    }
+    return { valid: false, errors: [error] };
   }
 }

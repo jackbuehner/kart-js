@@ -1,18 +1,14 @@
-import msgpack, { decodeTimestampToTimeSpec, encodeTimeSpecToTimestamp, EXT_TIMESTAMP } from '@msgpack/msgpack';
+import * as msgpack from '@msgpack/msgpack';
+import { decodeTimestampToTimeSpec, encodeTimeSpecToTimestamp, EXT_TIMESTAMP } from '@msgpack/msgpack';
 import { GeoPackageGeometryData } from '@ngageoint/geopackage/dist/lib/geom/geoPackageGeometryData.js';
 import { FeatureConverter } from '@ngageoint/simple-features-geojson-js/dist/lib/FeatureConverter.js';
 import { Temporal } from 'temporal-polyfill';
 import z from 'zod';
+import { Enumerable } from '../utils/Enumerable.ts';
 import { FileNotFoundError } from '../utils/errors.ts';
-import {
-  convertGeometryToWkb,
-  isGeoJsonFeature,
-  reprojectFeature,
-  type FeatureWithId,
-  type GeometryWithCrs,
-  type KartEnabledFeature,
-} from '../utils/features/index.ts';
+import { convertGeometryToWkb, isGeoJsonFeature } from '../utils/features/index.ts';
 import { Path } from '../utils/Path.ts';
+import { Feature } from './Feature.ts';
 import type { Legends } from './Legend.ts';
 import type { PathStructure } from './PathStructure.ts';
 import type { Schema } from './Schema.ts';
@@ -65,7 +61,7 @@ export class RawFeature {
    *
    * @returns An object containing the upgraded ids, properties, and metadata about the upgrade process.
    */
-  toObject(legends: Legends, schema: Schema, pathStructure: PathStructure, { validate = true } = {}) {
+  toObject(legends: Legends, schema: Schema, pathStructure: PathStructure) {
     const legend = legends.find((legend) => legend.id === this.legendId);
     if (!legend) {
       throw new Error(`Legend with id ${this.legendId} not found`);
@@ -147,41 +143,6 @@ export class RawFeature {
       fileName: path.split('/').slice(-1)[0],
     } as const;
 
-    if (!validate) {
-      return {
-        ids: ids as ReadonlyMap<string, unknown>,
-        properties: properties as ReadonlyMap<string, unknown>,
-        metadata,
-      };
-    }
-
-    // For validation, we must combined ids and properties into a single object
-    const combinedData: Record<string, unknown> = {};
-    ids.forEach((value, key) => {
-      combinedData[key] = value;
-    });
-    properties.forEach((value, key) => {
-      combinedData[key] = value;
-    });
-
-    const { data: validatedData, errors } = schema.validateFeature(combinedData);
-    if (errors.length > 0) {
-      throw new Error(`Feature validation failed: \n- ${errors.join('\n- ')}`);
-    }
-
-    // We need to separate the validated data back into ids and properties
-    const idsKeys = new Set(ids.keys());
-    const propertiesKeys = new Set(properties.keys());
-    ids.clear();
-    properties.clear();
-    for (const [key, value] of Object.entries(validatedData)) {
-      if (idsKeys.has(key)) {
-        ids.set(key, value);
-      } else if (propertiesKeys.has(key)) {
-        properties.set(key, value);
-      }
-    }
-
     return {
       ids: ids as ReadonlyMap<string, unknown>,
       properties: properties as ReadonlyMap<string, unknown>,
@@ -189,47 +150,8 @@ export class RawFeature {
     };
   }
 
-  /**
-   * Converts the raw feature into a GeoJSON Feature object.
-   *
-   * This function will upgrade the raw feature to the latest schema via `toObject()`
-   * before converting it to a GeoJSON Feature.
-   */
-  toFeature(legends: Legends, schema: Schema, pathStructure: PathStructure) {
-    const { ids, properties, metadata } = this.toObject(legends, schema, pathStructure);
-
-    const geometryColumn = metadata.geometryColumn;
-    const geometry = geometryColumn ? (properties.get(geometryColumn.name) as GeoJSON.Geometry) : null;
-    if (!geometryColumn || !geometry) {
-      return null;
-    }
-
-    const geometryWithCrs = geometry as GeometryWithCrs;
-    geometryWithCrs.crs = { type: 'name', properties: { name: metadata.crs } };
-
-    const featureProperties: Record<string, unknown> = {};
-    properties.forEach((value, key) => {
-      if (key !== geometryColumn.name) {
-        featureProperties[key] = value;
-      }
-    });
-
-    const reprojectedFeature = reprojectFeature(
-      {
-        type: 'Feature',
-        id: metadata.fileName,
-        _kart: {
-          ids: Object.fromEntries(ids),
-          path: metadata.path,
-          geometryColumn,
-        },
-        properties: featureProperties,
-        geometry: geometryWithCrs,
-      } as KartEnabledFeature<GeometryWithCrs>,
-      'EPSG:4326'
-    ) as KartEnabledFeature<GeometryWithCrs>;
-
-    return reprojectedFeature;
+  toFeature(schema: Schema, legends: Legends, pathStructure: PathStructure) {
+    return Feature.fromRawFeature(this, schema, legends, pathStructure);
   }
 
   /**
@@ -257,6 +179,8 @@ export class RawFeature {
     return new RawFeature(legendId, primaryKeyData, properties);
   }
 }
+
+export class RawFeatures extends Enumerable<RawFeature> {}
 
 const extensionCodec = new msgpack.ExtensionCodec();
 extensionCodec.register({

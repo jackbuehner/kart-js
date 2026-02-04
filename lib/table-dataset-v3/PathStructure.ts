@@ -1,4 +1,4 @@
-import msgpack from '@msgpack/msgpack';
+import * as msgpack from '@msgpack/msgpack';
 import { sha256 } from '@noble/hashes/sha2.js';
 import z from 'zod';
 import { FileNotFoundError, InvalidFileContentsError } from '../utils/errors.ts';
@@ -218,6 +218,15 @@ export class PathStructure {
     }
 
     return result;
+  }
+
+  toObject() {
+    return {
+      scheme: this.scheme,
+      branches: this.branches,
+      levels: this.levels,
+      encoding: this.encoding,
+    };
   }
 
   /**
