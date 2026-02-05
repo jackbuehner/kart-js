@@ -4,10 +4,8 @@ export async function loadShims() {
   await Promise.all([
     import('es-arraybuffer-base64/shim').then(({ default: shimArrayBufferBase64 }) => shimArrayBufferBase64()),
   ]);
-}
 
-// ensure that the temporal dates print nicely in the console
-(async () => {
+  // ensure that the temporal dates print nicely in the console
   if (process.env.TARGET === 'node') {
     const { inspect } = await import('node:util');
     type InspectOptions = Parameters<typeof inspect>[1];
@@ -41,4 +39,4 @@ export async function loadShims() {
       return (opts as any).stylize(this.toString(), 'date');
     };
   }
-})();
+}

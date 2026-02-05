@@ -418,15 +418,16 @@ export class WorkingFeatureCollection extends Emitter<{
   }
 
   /**
-   * Gets a diff of the changes made to the feature collection since creation.
+   * Gets a list of changes made to the feature collection since creation.
+   *
+   * @remarks
+   * The changes are represented as an array of objects, each describing a
+   * single change (insertion, deletion, or update) to a feature. Each change
+   * includes the type of change and the relevant data for that change.
    */
-  get diff() {
+  get changes() {
     if (!this.isDirty) {
-      return {
-        'kart.diff/v1+hexwkb': makeSerializeable<KartDiff.HexWkB.v1.Diff>({
-          [this.#datasetId]: {},
-        }),
-      };
+      return [];
     }
 
     const featureCollectionDiff = diffFeatureCollections(
@@ -453,14 +454,10 @@ export class WorkingFeatureCollection extends Emitter<{
 
       const originalPrimaryKeyValues: Record<string, unknown> = {};
       this.#primaryKeys.map((primaryKey, index) => {
-        if (index === 0) {
-          originalPrimaryKeyValues[primaryKey] = featureId;
-        } else {
-          // All primary keys must be present in the diff.
-          // Since serializing undefined to JSON removes the key,
-          // we must use null for empty or missing primary key values.
-          originalPrimaryKeyValues[primaryKey] = originalFeature.properties?.[primaryKey] ?? null;
-        }
+        // All primary keys must be present in the diff.
+        // Since serializing undefined to JSON removes the key,
+        // we must use null for empty or missing primary key values.
+        originalPrimaryKeyValues[primaryKey] = originalFeature._kart.ids[primaryKey] ?? null;
       });
 
       changes.push({ type: 'delete', data: originalPrimaryKeyValues });
@@ -486,28 +483,22 @@ export class WorkingFeatureCollection extends Emitter<{
 
       const originalPrimaryKeyValues: Record<string, unknown> = {};
       this.#primaryKeys.map((primaryKey, index) => {
-        if (index === 0) {
-          originalPrimaryKeyValues[primaryKey] = modification.id;
-        } else {
-          // Since serializing undefined to JSON removes the key,
-          // we must use null for empty or missing primary key values.
-          originalPrimaryKeyValues[primaryKey] = originalFeature.properties?.[primaryKey] ?? null;
-        }
+        // Since serializing undefined to JSON removes the key,
+        // we must use null for empty or missing primary key values.
+        originalPrimaryKeyValues[primaryKey] = originalFeature._kart.ids[primaryKey] ?? null;
       });
 
       const newPrimaryKeyValues: Record<string, unknown> = {};
       this.#primaryKeys.map((primaryKey, index) => {
-        if (index === 0) {
-          newPrimaryKeyValues[primaryKey] = modification.id;
-        } else {
-          // Since serializing undefined to JSON removes the key,
-          // we must use null for empty or missing primary key values.
-          newPrimaryKeyValues[primaryKey] =
-            modification.properties?.[primaryKey] ?? originalFeature.properties?.[primaryKey] ?? null;
-        }
+        // Since serializing undefined to JSON removes the key,
+        // we must use null for empty or missing primary key values.
+        newPrimaryKeyValues[primaryKey] =
+          modification.ids?.[primaryKey] ?? originalFeature._kart.ids?.[primaryKey] ?? null;
       });
 
-      // if any primary key value has changed, we need to treat this as a delete and insert
+      // Modifying primary keys means that we need to treat this as a delete and insert.
+      // We also need to compute a new feature ID from the primary key values since
+      // the feature ID is an encoded representation of the primary key values.
       const primaryKeyHasChanged = this.#primaryKeys.some((primaryKey) => {
         return stringify(originalPrimaryKeyValues[primaryKey]) !== stringify(newPrimaryKeyValues[primaryKey]);
       });
@@ -546,9 +537,24 @@ export class WorkingFeatureCollection extends Emitter<{
       changes.push({ type: 'update', data });
     });
 
+    return changes;
+  }
+
+  /**
+   * Gets a diff of the changes made to the feature collection since creation.
+   */
+  get diff() {
+    if (this.changes.length === 0) {
+      return {
+        'kart.diff/v1+hexwkb': makeSerializeable<KartDiff.HexWkB.v1.Diff>({
+          [this.#datasetId]: {},
+        }),
+      };
+    }
+
     const diff: KartDiff.HexWkB.v1.Diff = {
       [this.#datasetId]: {
-        feature: changes
+        feature: this.changes
           .map((change) => {
             if (change.type === 'insert') {
               return {

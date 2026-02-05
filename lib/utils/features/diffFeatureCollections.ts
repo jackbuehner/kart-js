@@ -1,13 +1,15 @@
+import { Feature } from '../../table-dataset-v3/Feature.ts';
 import serializer from '../../table-dataset-v3/serializer.ts';
 import { hasFeatureId } from './hasFeatureId.ts';
-import type { FeatureWithId } from './index.ts';
+import type { FeatureWithId, KartEnabledFeature, KartFeatureCollection } from './index.ts';
 
 interface FeatureCollectionDiff {
-  inserted: GeoJSON.Feature[];
-  deleted: (string | number)[];
+  inserted: KartEnabledFeature[];
+  deleted: string[];
   modified: {
-    id: string | number;
+    id: string;
     properties?: Record<string, unknown>;
+    ids?: Record<string, unknown>;
     geometry?: GeoJSON.Geometry;
   }[];
 }
@@ -28,8 +30,8 @@ interface FeatureCollectionDiff {
  * @param reference - The feature collection to compare against.
  */
 export function diffFeatureCollections(
-  ours: GeoJSON.FeatureCollection,
-  reference: GeoJSON.FeatureCollection
+  ours: KartFeatureCollection,
+  reference: KartFeatureCollection
 ): FeatureCollectionDiff {
   // require feature ids on both collections
   if (!reference.features.every(hasFeatureId)) {
@@ -43,12 +45,12 @@ export function diffFeatureCollections(
   const deleted: FeatureCollectionDiff['deleted'] = [];
   const modified: FeatureCollectionDiff['modified'] = [];
 
-  const referenceFeatureMap = new Map<string | number, FeatureWithId>();
+  const referenceFeatureMap = new Map<string, KartEnabledFeature>();
   for (const feature of reference.features) {
     referenceFeatureMap.set(feature.id, feature);
   }
 
-  const oursFeatureMap = new Map<string | number, FeatureWithId>();
+  const oursFeatureMap = new Map<string, KartEnabledFeature>();
   for (const feature of ours.features) {
     oursFeatureMap.set(feature.id, feature);
   }
@@ -64,7 +66,9 @@ export function diffFeatureCollections(
       serializer.stringify(ourFeature.geometry) !== serializer.stringify(refFeature.geometry);
     const havePropertiesChanged =
       serializer.stringify(ourFeature.properties) !== serializer.stringify(refFeature.properties);
-    if (!hasGeometryChanged && !havePropertiesChanged) {
+    const havePrimaryKeysChanged =
+      serializer.stringify(ourFeature._kart.ids) !== serializer.stringify(refFeature._kart.ids);
+    if (!hasGeometryChanged && !havePropertiesChanged && !havePrimaryKeysChanged) {
       continue;
     }
 
@@ -90,6 +94,23 @@ export function diffFeatureCollections(
         }
       }
       modification.properties = modifiedProperties;
+    }
+
+    if (havePrimaryKeysChanged) {
+      const modifiedIds: Record<string, unknown> = {};
+      const allKeys = new Set<string>([
+        ...Object.keys(refFeature._kart.ids),
+        ...Object.keys(ourFeature._kart.ids),
+      ]);
+      for (const key of allKeys) {
+        const refValue = refFeature._kart.ids[key];
+        const ourValue = ourFeature._kart.ids[key];
+        const areDifferent = serializer.stringify(refValue) !== serializer.stringify(ourValue);
+        if (areDifferent) {
+          modifiedIds[key] = ourValue;
+        }
+      }
+      modification.ids = modifiedIds;
     }
 
     modified.push(modification);
