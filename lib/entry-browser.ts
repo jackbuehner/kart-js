@@ -1,12 +1,11 @@
+import './shims/loadShims.ts'; // this MUST be first to avoid @zenfs/core's incorrect Uint8Array polyfills
+
 export { TableDatasetV3 } from './table-dataset-v3/TableDatasetV3.ts';
 export { WorkingFeatureCollection } from './table-dataset-v3/WorkingFeatureCollection.ts';
 
 import { mount, resolveMountConfig } from '@zenfs/core';
 import { IndexedDB } from '@zenfs/dom';
 import { Kart as _Kart } from './Kart.ts';
-import { loadShims } from './shims/loadShims.ts';
-
-loadShims();
 
 /**
  * Initializes the file system that `kart-js` will use in the browser.
