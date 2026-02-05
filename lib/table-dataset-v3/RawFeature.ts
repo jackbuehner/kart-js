@@ -184,11 +184,14 @@ export class RawFeature {
       throw new FileNotFoundError(`File does not exist at path: ${filePath}`);
     }
 
-    const msgpackEncodedName = Uint8Array.fromBase64(filePath.name);
+    const msgpackEncodedName = Uint8Array.fromBase64(filePath.name, { alphabet: 'base64url' });
     const primaryKeyDataDecoded = msgpack.decode(msgpackEncodedName);
     const primaryKeyData = z.unknown().array().parse(primaryKeyDataDecoded);
 
-    const propertiesDecoded = msgpack.decode(filePath.readFileSync(), { extensionCodec, useBigInt64: true });
+    const fileContents = filePath.readFileSync();
+    const propertiesDecoded = msgpack
+      .decodeMulti(fileContents, { extensionCodec, useBigInt64: true })
+      .next().value; // decodeMulti allows us to ignore extra trailing bytes
     const [legendId, properties] = rawFeatureFileDataSchema.parse(propertiesDecoded);
 
     return new RawFeature(legendId, primaryKeyData, properties);
