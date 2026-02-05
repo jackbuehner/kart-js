@@ -169,7 +169,11 @@ export class WorkingFeatureCollection extends Emitter<{
               get(target, prop, receiver) {
                 const val = Reflect.get(target, prop, receiver);
                 if (val && typeof val === 'object') {
-                  return createFeatureProxy(featureToCheck, val, cache);
+                  const isPlain =
+                    Object.prototype.toString.call(val) === '[object Object]' || Array.isArray(val);
+                  if (isPlain) {
+                    return makeSerializeable(createFeatureProxy(featureToCheck, val, cache));
+                  }
                 }
                 return val;
               },

@@ -50,11 +50,11 @@ export function serializeJson(value: unknown): string {
   function replacer(_key: string, value: unknown): unknown {
     if (typeof value === 'object' && value !== null && 'type' in value && 'coordinates' in value) {
       const wkb = convertGeometryToWkb(value as GeoJSON.Geometry);
-      return Buffer.from(wkb).toString('hex');
+      return wkb.toHex();
     }
 
     if (value instanceof Uint8Array) {
-      return Buffer.from(value).toString('hex');
+      return value.toHex();
     }
 
     if (typeof value === 'bigint') {
