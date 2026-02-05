@@ -6,6 +6,7 @@ import {
   isKartEnabledFeature,
 } from '../utils/features/index.ts';
 import { Emitter } from '../utils/index.ts';
+import type { CRSs } from './CRS.ts';
 import type { KartDiff } from './diffs.js';
 import { AggregateValidationError, Feature } from './Feature.ts';
 import type { Schema } from './Schema.ts';
@@ -25,11 +26,12 @@ export class WorkingFeatureCollection extends Emitter<{
   geometryType: Omit<'GeometryCollection', GeoJSON.Geometry['type']> | undefined;
 
   #schema: Schema;
+  #crss: CRSs;
   #datasetId: string;
   #primaryKeys: string[];
   #primaryGeometryKey: string;
 
-  constructor(datasetId: string, featureCollection: FeatureCollection, schema: Schema) {
+  constructor(datasetId: string, featureCollection: FeatureCollection, schema: Schema, crss: CRSs) {
     super();
 
     this.#datasetId = datasetId;
@@ -65,6 +67,7 @@ export class WorkingFeatureCollection extends Emitter<{
       : geometryColumns.includes('geom')
         ? 'geom'
         : geometryColumns[0];
+    this.#crss = crss;
   }
 
   /**
@@ -101,7 +104,7 @@ export class WorkingFeatureCollection extends Emitter<{
             return true;
           }
 
-          const { valid, errors } = checkFeatureCompliance(feature, schema);
+          const { valid, errors } = checkFeatureCompliance(feature, schema, this.#crss);
           if (!valid) {
             throw new TypeError(
               `Feature that was attempted to be set at index ${index} does not comply with schema: ${errors.join('; ')}`
@@ -188,7 +191,7 @@ export class WorkingFeatureCollection extends Emitter<{
                   return setResult;
                 }
 
-                const { valid, errors } = checkFeatureCompliance(featureToCheck, schema);
+                const { valid, errors } = checkFeatureCompliance(featureToCheck, schema, classInstance.#crss);
                 if (!valid) {
                   // revert the change
                   Reflect.set(target, prop, oldValue, receiver);
@@ -219,7 +222,7 @@ export class WorkingFeatureCollection extends Emitter<{
                 const oldFeature = parse(stringify(featureToCheck));
                 const deleteResult = Reflect.deleteProperty(target, prop);
 
-                const { valid, errors } = checkFeatureCompliance(featureToCheck, schema);
+                const { valid, errors } = checkFeatureCompliance(featureToCheck, schema, classInstance.#crss);
                 if (!valid) {
                   // revert the deletion
                   Reflect.set(target, prop, oldValue);
@@ -315,7 +318,8 @@ export class WorkingFeatureCollection extends Emitter<{
         properties: newProperties,
         _kart: this.#featureCollection.features[index]._kart,
       },
-      this.#schema
+      this.#schema,
+      this.#crss
     );
     if (!valid) {
       throw new Error(
@@ -384,7 +388,7 @@ export class WorkingFeatureCollection extends Emitter<{
       );
     }
 
-    const { valid, errors } = checkFeatureCompliance(feature, this.#schema);
+    const { valid, errors } = checkFeatureCompliance(feature, this.#schema, this.#crss);
     if (!valid) {
       throw new Error(
         `Feature to add with ID "${feature.id}" does not comply with schema: ${errors.join('; ')}`
@@ -568,16 +572,16 @@ export class WorkingFeatureCollection extends Emitter<{
     return {
       'kart.patch/v1': {
         base: null,
-        crs: 'EPSG:4326',
+        crs: 'EPSG:4326', // we use reprojected geometries in the diff, so the CRS is always EPSG:4326
       },
       'kart.diff/v1+hexwkb': makeSerializeable(diff),
     };
   }
 }
 
-function checkFeatureCompliance(feature: KartEnabledFeature<GeometryWithCrs>, schema: Schema) {
+function checkFeatureCompliance(feature: KartEnabledFeature<GeometryWithCrs>, schema: Schema, crss: CRSs) {
   try {
-    Feature.fromGeoJSON(feature, schema);
+    Feature.fromGeoJSON(feature, schema, crss);
     return { valid: true, errors: [] };
   } catch (error) {
     if (error instanceof AggregateValidationError) {

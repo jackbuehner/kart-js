@@ -1,6 +1,7 @@
 import { GeoPackageGeometryData } from '@ngageoint/geopackage/dist/lib/geom/geoPackageGeometryData.js';
 import { FeatureConverter } from '@ngageoint/simple-features-geojson-js';
 import { ByteOrder } from '@ngageoint/simple-features-wkb-js';
+import { CRS, CRSs } from '../../table-dataset-v3/CRS.ts';
 import { reprojectFeature } from './reprojectFeature.ts';
 
 /**
@@ -17,14 +18,19 @@ import { reprojectFeature } from './reprojectFeature.ts';
  * @param toCrs Optional target CRS to reproject the geometry to before conversion. The geometry must have a defined CRS if this is provided.
  * @returns A Uint8Array containing the WKB representation of the geometry.
  */
-export function convertGeometryToWkb(geometry: GeoJSON.Geometry, toCrs?: string): Uint8Array {
+export function convertGeometryToWkb(geometry: GeoJSON.Geometry, toCrs?: CRS | string): Uint8Array {
   // convert GeoJSON geometry to the target CRS if necessary
   const fromCrs = (geometry as any).crs?.properties?.name;
   if (toCrs && !fromCrs) {
     throw new Error('Cannot reproject geometry without a defined CRS.');
   }
   if (fromCrs && toCrs && fromCrs !== toCrs) {
-    const t = reprojectFeature({ type: 'Feature', geometry, properties: {} }, toCrs);
+    const toCRS = typeof toCrs === 'string' ? toCrs : toCrs.identifier;
+    const t = reprojectFeature(
+      { type: 'Feature', geometry, properties: {} },
+      toCRS,
+      toCrs instanceof CRS ? new CRSs([toCrs]) : undefined
+    );
     geometry = t.geometry;
   }
 

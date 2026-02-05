@@ -3,6 +3,7 @@ import { Temporal } from 'temporal-polyfill';
 import { GeoJSONGeometrySchema } from 'zod-geojson';
 import { Enumerable } from '../utils/Enumerable.ts';
 import { reprojectFeature, type GeometryWithCrs, type KartEnabledFeature } from '../utils/features/index.ts';
+import type { CRSs } from './CRS.ts';
 import { Legends } from './Legend.ts';
 import type { PathStructure } from './PathStructure.ts';
 import type { RawFeature } from './RawFeature.ts';
@@ -11,6 +12,7 @@ import type { Schema, SchemaEntry, SchemaEntryTypes } from './Schema.ts';
 export class Feature {
   readonly schema: Schema;
   readonly legends: Legends;
+  readonly crss: CRSs;
 
   readonly ids: ReturnType<typeof RawFeature.prototype.toObject>['ids'];
   readonly properties: ReturnType<typeof RawFeature.prototype.toObject>['properties'];
@@ -21,28 +23,32 @@ export class Feature {
     properties: typeof Feature.prototype.properties,
     metadata: typeof Feature.prototype.metadata,
     schema: typeof Feature.prototype.schema,
-    legends: typeof Feature.prototype.legends
+    legends: typeof Feature.prototype.legends,
+    crss: typeof Feature.prototype.crss
   ) {
     this.ids = ids;
     this.properties = properties;
     this.metadata = metadata;
     this.schema = schema;
     this.legends = legends;
+    this.crss = crss;
   }
 
   static fromRawFeature(
     rawFeature: RawFeature,
     schema: Schema,
     legends: Legends,
-    pathStructure: PathStructure
+    pathStructure: PathStructure,
+    crss: CRSs
   ) {
-    const rawFeatureObject = rawFeature.toObject(legends, schema, pathStructure);
+    const rawFeatureObject = rawFeature.toObject(legends, schema, pathStructure, crss);
     return new Feature(
       rawFeatureObject.ids,
       rawFeatureObject.properties,
       rawFeatureObject.metadata,
       schema,
-      legends
+      legends,
+      crss
     );
   }
 
@@ -56,7 +62,7 @@ export class Feature {
    * @throws {Error} If the feature does not have properties or _kart.ids defined.
    * @throws {AggregateValidationError} If any of the values fail validation against their expected types in the schema. The error will include details about all validation errors encountered during the validation process.
    */
-  static fromGeoJSON(geojsonFeature: KartEnabledFeature<GeometryWithCrs>, schema: Schema) {
+  static fromGeoJSON(geojsonFeature: KartEnabledFeature<GeometryWithCrs>, schema: Schema, crss: CRSs) {
     if (!geojsonFeature.properties) {
       throw new Error('Feature must have properties to be converted to a RawFeature.');
     }
@@ -74,13 +80,14 @@ export class Feature {
       properties,
       {
         geometryColumn: geojsonFeature._kart.geometryColumn,
-        crs: geojsonFeature.geometry.crs?.properties.name ?? 'EPSG:4326',
+        crs: geojsonFeature.geometry.crs?.properties.name ?? null,
         droppedKeys: [],
         fileName: geojsonFeature.id?.toString() ?? '',
         path: geojsonFeature._kart.path,
       },
       schema,
-      new Legends([schema.toLegend()])
+      new Legends([schema.toLegend()]),
+      crss
     );
 
     const result = feature.validate();
@@ -184,7 +191,7 @@ export class Feature {
 
     const geometryColumn = metadata.geometryColumn;
     const geometry = geometryColumn ? (properties.get(geometryColumn.name) as GeoJSON.Geometry) : null;
-    if (!geometryColumn || !geometry) {
+    if (!geometryColumn || !geometry || !metadata.crs) {
       return null;
     }
 
@@ -210,7 +217,8 @@ export class Feature {
         properties: featureProperties,
         geometry: geometryWithCrs,
       } as KartEnabledFeature<GeometryWithCrs>,
-      'EPSG:4326'
+      'EPSG:4326',
+      this.crss
     ) as KartEnabledFeature<GeometryWithCrs>;
   }
 

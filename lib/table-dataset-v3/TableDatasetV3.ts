@@ -1,5 +1,6 @@
 import type { KartFeatureCollection } from '../utils/features/index.ts';
 import { Path } from '../utils/index.ts';
+import { CRS, CRSs } from './CRS.ts';
 import { Features } from './Feature.ts';
 import { Legend, Legends } from './Legend.ts';
 import { PathStructure } from './PathStructure.ts';
@@ -18,6 +19,7 @@ export class TableDatasetV3 {
   readonly pathStructure: PathStructure;
   readonly schema: Schema;
   readonly legends: Legends;
+  readonly crss: CRSs;
 
   readonly working: WorkingFeatureCollection;
 
@@ -39,6 +41,7 @@ export class TableDatasetV3 {
       this.schema = validatedContents.schema;
       this.description = validatedContents.description;
       this.legends = validatedContents.legends;
+      this.crss = validatedContents.crss;
     } catch (error) {
       const toThrow = new Error(`Dataset with id "${id}" has invalid contents: ${(error as Error).message}`);
       if (error instanceof Error) {
@@ -49,7 +52,7 @@ export class TableDatasetV3 {
       throw toThrow;
     }
 
-    this.working = new WorkingFeatureCollection(this.id, this.toFeatureCollection(), this.schema);
+    this.working = new WorkingFeatureCollection(this.id, this.toFeatureCollection(), this.schema, this.crss);
   }
 
   static isValidDataset(repoDir: Path, id: string, validateContents = false) {
@@ -128,12 +131,26 @@ export class TableDatasetV3 {
       legends.add(legend);
     }
 
+    const crss = new CRSs();
+    const hasCrsFolder = repoDir.join(id, '.table-dataset', 'meta', 'crs').exists;
+    if (hasCrsFolder) {
+      repoDir
+        .join(id, '.table-dataset', 'meta', 'crs')
+        .readDirectorySync()
+        .filter((path) => path.isFile)
+        .filter((filePath) => filePath.extension === 'wkt')
+        .forEach((wktFilePath) => {
+          crss.add(CRS.fromWktFile(wktFilePath));
+        });
+    }
+
     return {
       title,
       description,
       pathStructure,
       schema,
       legends,
+      crss,
     };
   }
 
@@ -165,7 +182,7 @@ export class TableDatasetV3 {
     const features = new Features();
 
     for (const rawFeature of this.toRawFeatures()) {
-      const feature = rawFeature.toFeature(this.schema, this.legends, this.pathStructure);
+      const feature = rawFeature.toFeature(this.schema, this.legends, this.pathStructure, this.crss);
       features.add(feature);
     }
 

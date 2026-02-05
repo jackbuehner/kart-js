@@ -520,9 +520,15 @@ const geometryCol = withIsPrimary(
      * the coordinate reference system (CRS) used for the
      * geometries.
      *
+     * In most cases, this will be an EPSG code in the format `EPSG:1234`.
+     * However, technically any string is allowed.
+     * The dataset's /meta/crs folder MUST contain a .wkt file with the
+     * same name as the CRS identifier (e.g. `EPSG_1234.wkt`) that
+     * contains the WKT definition of the CRS.
+     *
      * If the CRS is unknown, the value should be `null`.
      */
-    geometryCrs: geometryCrs.optional(),
+    geometryCrs: z.string().optional(),
   })
 );
 

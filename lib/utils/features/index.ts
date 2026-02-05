@@ -6,17 +6,10 @@ export { isKartEnabledFeature } from './isKartEnabled.ts';
 export { reprojectFeature } from './reprojectFeature.ts';
 export { transformCoordinates } from './transformCoordinates.ts';
 
-// register all EPSG codes
-import epsg from 'epsg-index/all.json' with { type: 'json' };
-import proj4 from 'proj4';
-for (const code in epsg) {
-  proj4.defs(`EPSG:${code}`, (epsg as any)[code].proj4);
-}
-
 import type { Feature, GeoJsonProperties, Geometry } from 'geojson';
 
 export type GeometryWithCrs = GeoJSON.Geometry & {
-  crs?: { type: 'name'; properties: { name: `${string}:${number}` } };
+  crs?: { type: 'name'; properties: { name: string } };
 };
 
 export type FeatureWithId<G extends Geometry | null = Geometry, P = GeoJsonProperties> = Feature<G, P> & {

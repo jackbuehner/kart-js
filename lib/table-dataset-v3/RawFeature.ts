@@ -8,6 +8,7 @@ import { Enumerable } from '../utils/Enumerable.ts';
 import { FileNotFoundError } from '../utils/errors.ts';
 import { convertGeometryToWkb, isGeoJsonFeature } from '../utils/features/index.ts';
 import { Path } from '../utils/Path.ts';
+import type { CRSs } from './CRS.ts';
 import { Feature } from './Feature.ts';
 import type { Legends } from './Legend.ts';
 import type { PathStructure } from './PathStructure.ts';
@@ -61,7 +62,7 @@ export class RawFeature {
    *
    * @returns An object containing the upgraded ids, properties, and metadata about the upgrade process.
    */
-  toObject(legends: Legends, schema: Schema, pathStructure: PathStructure) {
+  toObject(legends: Legends, schema: Schema, pathStructure: PathStructure, crss: CRSs) {
     const legend = legends.find((legend) => legend.id === this.legendId);
     if (!legend) {
       throw new Error(`Legend with id ${this.legendId} not found`);
@@ -122,10 +123,24 @@ export class RawFeature {
         : null,
       /**
        * The Coordinate Reference System (CRS) of the feature's geometry.
-       * - If the schema does not have a geometry column, this will be `'EPSG:4326'`.
-       * - If the schema's primary geometry column does not specify a CRS, this will default to `'EPSG:4326'`.
+       * - Any string value is allowed in this field. It must have a corresponding CRS
+       *     .wkt file in the dataset's /meta/crs folder that defines defines the WKT
+       *     for the CRS.
+       * - If the schema does not have a geometry column, this will be null.
+       * - If the schema's primary geometry column does not specify a CRS, this will be EPSG:4326.
+       * - If the schema's primary geometry column specifies a CRS that cannot be found, this will be null.
        */
-      crs: featureGeometryColumn?.geometryCrs ?? 'EPSG:4326',
+      crs: (() => {
+        if (!featureGeometryColumn) {
+          return null;
+        }
+
+        if (!featureGeometryColumn.geometryCrs) {
+          return 'EPSG:4326';
+        }
+
+        return crss.find((crs) => crs.identifier === featureGeometryColumn.geometryCrs)?.identifier ?? null;
+      })(),
       /**
        * An array of column IDs that were present in the legend but not in the current schema.
        * These columns have been dropped during the upgrade process.
@@ -150,8 +165,8 @@ export class RawFeature {
     };
   }
 
-  toFeature(schema: Schema, legends: Legends, pathStructure: PathStructure) {
-    return Feature.fromRawFeature(this, schema, legends, pathStructure);
+  toFeature(schema: Schema, legends: Legends, pathStructure: PathStructure, crss: CRSs) {
+    return Feature.fromRawFeature(this, schema, legends, pathStructure, crss);
   }
 
   /**
