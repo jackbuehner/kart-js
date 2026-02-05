@@ -94,9 +94,9 @@ export function makeSerializeable<T extends object>(data: T) {
 export function hexHash(data: string | Uint8Array | ArrayBuffer) {
   let bytes: Uint8Array<ArrayBuffer>;
   if (data instanceof Uint8Array && data.buffer instanceof ArrayBuffer) {
-    bytes = data as Uint8Array<ArrayBuffer>;
+    bytes = data.slice() as Uint8Array<ArrayBuffer>;
   } else if (data instanceof Uint8Array) {
-    bytes = new Uint8Array(data);
+    bytes = new Uint8Array(data).slice();
   } else if (data instanceof ArrayBuffer) {
     bytes = new Uint8Array(data);
   } else if (typeof data === 'string') {

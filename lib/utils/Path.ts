@@ -110,7 +110,7 @@ export class Path {
         return readFileSync(this.fullPath, options) as unknown as string;
       }
       const buffer = readFileSync(this.fullPath, options);
-      return new Uint8Array(buffer);
+      return new Uint8Array(buffer).slice();
     } catch (error) {
       const exposedError = new FileReadError(`Failed to read file at path: ${this.fullPath}`);
       exposedError.cause = error;

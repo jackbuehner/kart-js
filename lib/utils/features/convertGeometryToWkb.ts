@@ -51,7 +51,7 @@ export function convertGeometryToWkb(geometry: GeoJSON.Geometry, toCrs?: CRS | s
     geom.setEnvelope(sfGeom.getEnvelope());
   }
 
-  return new Uint8Array(geom.toBuffer());
+  return new Uint8Array(geom.toBuffer()).slice();
 }
 
 // class GeoPackageBinaryHeader {
