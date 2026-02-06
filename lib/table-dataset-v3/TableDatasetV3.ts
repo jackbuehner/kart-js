@@ -1,3 +1,4 @@
+import Flatbush from 'flatbush';
 import type { KartFeatureCollection } from '../utils/features/index.ts';
 import { Path } from '../utils/index.ts';
 import { CRS, CRSs } from './CRS.ts';
@@ -7,9 +8,11 @@ import { PathStructure } from './PathStructure.ts';
 import { RawFeature, RawFeatures } from './RawFeature.ts';
 import { Schema } from './Schema.ts';
 import { WorkingFeatureCollection } from './WorkingFeatureCollection.ts';
+import serializer from './serializer.ts';
 
 export class TableDatasetV3 {
   readonly path: Path;
+  readonly metaPath: Path;
 
   readonly type = 'table-dataset-v3';
   readonly id: string;
@@ -40,6 +43,13 @@ export class TableDatasetV3 {
 
     this.path = repoPath.join(id);
     this.id = id;
+
+    const metaPath = this.path.parentPath?.parentPath?.join('.kartjs', this.id);
+    if (!metaPath) {
+      throw new Error('Failed to get .kartjs path.');
+    }
+    metaPath.makeDirectory({ recursive: true });
+    this.metaPath = metaPath;
 
     try {
       const validatedContents = TableDatasetV3.getValidatedContents(repoPath, id);
@@ -344,6 +354,60 @@ export class TableDatasetV3 {
     }
 
     return features;
+  }
+
+  private get spatialIndexPath() {
+    return this.metaPath.join('spatial_index.fb');
+  }
+
+  private get spatialIndexRefPath() {
+    return this.metaPath.join('spatial_index.fb.ref');
+  }
+
+  /**
+   * Gets all features that intersect with the given bounding box.
+   *
+   * @param bbox - The bounding box to check for intersection, in the format [minX, minY, maxX, maxY].
+   */
+  async selectIntersection(bbox: [number, number, number, number]) {
+    let sIndex: Flatbush;
+    let eidIndex: string[];
+
+    // create a spatial index on the dataset if one does not already exist
+    if (!this.spatialIndexPath.exists || !this.spatialIndexRefPath.exists) {
+      sIndex = new Flatbush(this.featureCount);
+      eidIndex = [];
+
+      for await (const feature of this.features()) {
+        const bbox = feature.toBbox();
+        if (bbox) {
+          sIndex.add(bbox[0], bbox[1], bbox[2], bbox[3]);
+          eidIndex.push(feature.metadata.eid);
+        }
+      }
+
+      sIndex.finish();
+      this.spatialIndexPath.parentPath!.makeDirectory({ recursive: true });
+      this.spatialIndexPath.writeFile(new Uint8Array(sIndex.data.slice()));
+      this.spatialIndexRefPath.writeFile(serializer.encode(eidIndex));
+    }
+
+    // otherwise, load the existing spatial index
+    else {
+      const sIndexBuffer = this.spatialIndexPath.readFileSync();
+      sIndex = Flatbush.from(
+        sIndexBuffer.buffer.slice(sIndexBuffer.byteOffset, sIndexBuffer.byteOffset + sIndexBuffer.byteLength)
+      );
+      const eidIndexBuffer = this.spatialIndexRefPath.readFileSync();
+      eidIndex = serializer.decode(eidIndexBuffer) as string[];
+    }
+
+    // query the spatial index for intersecting features
+    const intersectingIndices = sIndex.search(bbox[0], bbox[1], bbox[2], bbox[3]);
+    const intersectingEids = intersectingIndices
+      .map((index) => eidIndex[index])
+      .filter((x): x is string => !!x);
+    return this.select(intersectingEids);
   }
 
   /**

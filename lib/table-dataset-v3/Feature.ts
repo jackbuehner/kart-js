@@ -1,3 +1,4 @@
+import { bbox as computeBbox } from '@turf/bbox';
 import { Decimal } from 'decimal.js';
 import { Temporal } from 'temporal-polyfill';
 import { GeoJSONGeometrySchema } from 'zod-geojson';
@@ -268,6 +269,37 @@ export class Feature {
       return makeSerializable(feature);
     }
     return feature;
+  }
+
+  /**
+   * Calculates the bounding box of the feature's geometry.
+   *
+   * If the feature geometry cannot be retreived without error,
+   * or if the feature does not have a geometry, this method returns null.
+   */
+  toBbox() {
+    const geometryColumn = this.metadata.geometryColumn;
+    if (!geometryColumn) {
+      return null;
+    }
+
+    const geometry = this.getGeometry(geometryColumn.name);
+    if (!geometry.ok || !geometry.data) {
+      return null;
+    }
+
+    const epsg4326Geometry = reprojectFeature(
+      {
+        type: 'Feature',
+        id: this.metadata.eid,
+        properties: {},
+        geometry: geometry.data,
+      },
+      'EPSG:4326',
+      this.crss
+    ).geometry;
+
+    return computeBbox(epsg4326Geometry);
   }
 
   /**

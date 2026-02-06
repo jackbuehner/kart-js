@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from '@zenfs/core';
 import * as path from '@zenfs/core/path';
-import { opendir, readdir, rm } from '@zenfs/core/promises';
+import { mkdir, opendir, readdir, rm, writeFile } from '@zenfs/core/promises';
 import { FileNotFoundError, FileReadError } from './errors.ts';
 
 export class Path {
@@ -219,6 +219,48 @@ export class Path {
    * Removes the file or directory at this path.
    */
   async rm(options?: { recursive?: boolean; force?: boolean }) {
+    if (!this.exists) {
+      return;
+    }
     return await rm(this.fullPath, options);
+  }
+
+  /**
+   * Writes data to a file at this path, replacing the file if it already exists. If the file does not exist, creates a new file.
+   *
+   * @throws {FileReadError} If the file cannot be written.
+   */
+  async writeFile(
+    data: string | Uint8Array,
+    options?: {
+      encoding?: import('fs').ObjectEncodingOptions['encoding'];
+      flag?: import('fs').OpenMode;
+      flush?: boolean;
+      mode?: import('fs').Mode;
+    }
+  ) {
+    try {
+      await writeFile(this.fullPath, data, options);
+    } catch (error) {
+      const exposedError = new FileReadError(`Failed to write file at path: ${this.fullPath}`);
+      exposedError.cause = error;
+      throw exposedError;
+    }
+  }
+
+  /**
+   * If the directory does not exist, creates a directory at this path. If the directory already exists, does nothing.
+   * @throws {FileReadError} If a file already exists at this path, or if the directory cannot be created.
+   */
+  async makeDirectory(options?: { recursive?: boolean; mode?: import('fs').Mode }) {
+    if (!this.exists) {
+      try {
+        await mkdir(this.fullPath, options);
+      } catch (error) {
+        const exposedError = new FileReadError(`Failed to create directory at path: ${this.fullPath}`);
+        exposedError.cause = error;
+        throw exposedError;
+      }
+    }
   }
 }

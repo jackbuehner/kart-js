@@ -26,6 +26,7 @@ interface KartCloneOptions {
 
 export class Kart {
   readonly repoDir: Path;
+  readonly internalDir: Path;
   readonly throttledFs: typeof fs;
 
   readonly data: Data;
@@ -34,6 +35,10 @@ export class Kart {
   protected constructor(repoDir: string | Path) {
     this.repoDir = repoDir instanceof Path ? repoDir : new Path(repoDir);
     this.throttledFs = Kart.throttledFs;
+
+    this.internalDir = this.repoDir.parentPath!.join('.kartjs');
+    this.internalDir.makeDirectory();
+
     this.data = new Data(this);
     this.diff = new Diff(this);
   }
@@ -75,6 +80,9 @@ export class Kart {
     if (!dir) {
       dir = Kart.inferRepoNameFromUrl(url);
     }
+
+    // always use a subfolder called "repository"
+    dir = new Path(dir).join('repository').absolute;
 
     const http = await (async () => {
       if (process.env.TARGET === 'node') {
@@ -154,6 +162,7 @@ export class Kart {
       });
 
       await checkout({ fs: this.throttledFs, dir, ref: defaultBranch, force: true, onProgress });
+      await new Path(dir).join('.kartjs').rm({ recursive: true, force: true }); // clear internal directory to remove any stale data from previous version
       return new Kart(dir);
     }
 
