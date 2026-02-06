@@ -70,13 +70,32 @@ export function serializeJson(value: unknown): string {
   return JSON.stringify(value, replacer);
 }
 
-export function makeSerializeable<T extends object>(data: T) {
+/**
+ * Returns a proxy that makes an object serializable by adding a `toJSON` method.
+ *
+ * By default, this is done recursively for nested objects as well.
+ *
+ * @param data The object to make serializable.
+ * @param options.recursive Whether to make nested objects serializable as well. Default is true.
+ * @returns A proxy of the original object with a `toJSON` method.
+ */
+export function makeSerializable<T extends object>(
+  data: T,
+  { recursive = true } = {}
+): T & { toJSON: () => string } {
   return new Proxy(data, {
     get(target, prop, receiver) {
       if (prop === 'toJSON') {
         return () => serializeJson(target);
       }
-      return Reflect.get(target, prop, receiver);
+
+      const value = Reflect.get(target, prop, receiver);
+
+      if (recursive && value !== null && typeof value === 'object' && value.constructor === Object) {
+        return makeSerializable(value);
+      }
+
+      return value;
     },
   }) as T & { toJSON: () => string };
 }
