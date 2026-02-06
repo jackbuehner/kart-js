@@ -168,7 +168,7 @@ export class PathStructure {
     let result = '';
 
     if (integer === 0n) {
-      return chars[0];
+      return chars[0]!;
     }
 
     // process each 6-bit chunk of the integer
@@ -202,7 +202,7 @@ export class PathStructure {
     let result = '';
 
     if (integer === 0n) {
-      return chars[0];
+      return chars[0]!;
     }
 
     // process each 4-bit chunk of the integer

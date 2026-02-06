@@ -18,7 +18,7 @@
     "dist"
   ],
   "scripts": {
-    "start": "node src/index.ts",
+    "start": "cross-env TARGET=node node src/index.ts",
     "build": "node build.ts",
     "postinstall": "patch-package",
     "release": "npm run build && release-it --preRelease=alpha"
@@ -57,6 +57,7 @@
     "@types/geojson": "^7946.0.16",
     "@types/node": "^25.2.0",
     "buffer": "^6.0.3",
+    "cross-env": "^10.1.0",
     "events": "^3.3.0",
     "patch-package": "^8.0.1",
     "release-it": "^19.2.4",

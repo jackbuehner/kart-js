@@ -15,7 +15,8 @@
     "outDir": "dist",
     "rootDir": "lib",
     "emitDeclarationOnly": true,
-    "isolatedModules": true
+    "isolatedModules": true,
+    "noUncheckedIndexedAccess": true
   },
   "include": [
     "lib/**/*"

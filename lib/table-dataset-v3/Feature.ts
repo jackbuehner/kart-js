@@ -2,12 +2,18 @@ import { Decimal } from 'decimal.js';
 import { Temporal } from 'temporal-polyfill';
 import { GeoJSONGeometrySchema } from 'zod-geojson';
 import { Enumerable } from '../utils/Enumerable.ts';
-import { reprojectFeature, type GeometryWithCrs, type KartEnabledFeature } from '../utils/features/index.ts';
+import {
+  reprojectFeature,
+  type GeometryWithCrs,
+  type KartEnabledFeature,
+  type KartFeatureCollection,
+} from '../utils/features/index.ts';
 import type { CRSs } from './CRS.ts';
 import { Legends } from './Legend.ts';
 import type { PathStructure } from './PathStructure.ts';
 import type { RawFeature } from './RawFeature.ts';
 import type { Schema, SchemaEntry, SchemaEntryTypes } from './Schema.ts';
+import { makeSerializable } from './serializer.ts';
 
 export class Feature {
   readonly schema: Schema;
@@ -183,9 +189,14 @@ export class Feature {
    * This function will upgrade raw feature to the latest schema via `toObject()`
    * before converting it to a GeoJSON Feature.
    *
+   * When serializable is true, the returned feature
+   * will have a `toJSON` method that uses the Kart serializer
+   * to serialize the feature properly. Without this, `JSON.stringify`
+   * will fail to serialize certain property types correctly.
+   *
    * @throws When an error is thrown by `toObject()`.
    */
-  toGeoJSON() {
+  toGeoJSON({ serializable = true } = {}) {
     const { ids, properties, metadata } = this.toObject();
 
     const geometryColumn = metadata.geometryColumn;
@@ -204,7 +215,7 @@ export class Feature {
       }
     });
 
-    return reprojectFeature(
+    const feature = reprojectFeature(
       {
         type: 'Feature',
         id: metadata.eid,
@@ -219,6 +230,11 @@ export class Feature {
       'EPSG:4326',
       this.crss
     ) as KartEnabledFeature<GeometryWithCrs>;
+
+    if (serializable) {
+      return makeSerializable(feature);
+    }
+    return feature;
   }
 
   /**
@@ -860,7 +876,24 @@ export class Feature {
   }
 }
 
-export class Features extends Enumerable<Feature> {}
+export class Features extends Enumerable<Feature> {
+  /**
+   * Converts the features into a GeoJSON FeatureCollection object.
+   *
+   * When serializable is true, every feature in the collection
+   * will have a `toJSON` method that uses the Kart serializer
+   * to serialize the feature properly. Without this, `JSON.stringify`
+   * will fail to serialize certain property types correctly.
+   */
+  toGeoJSON({ serializable = true } = {}): KartFeatureCollection {
+    return {
+      type: 'FeatureCollection',
+      // Performance note: It is faster to proxy each feature individually
+      // (with serializable: true) than to proxy the entire features array here.
+      features: this.map((feature) => feature.toGeoJSON({ serializable })).filter((x) => !!x),
+    };
+  }
+}
 
 class TypeMismatchError extends Error {
   constructor(expectedType: string, actualType?: string) {

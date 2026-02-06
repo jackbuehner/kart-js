@@ -43,7 +43,7 @@ export class Kart {
     if (!repoNameMatch) {
       throw new Error(`Could not infer repository name from URL: ${url}. Please provide a directory name.`);
     }
-    return repoNameMatch[1];
+    return repoNameMatch[1]!;
   }
 
   private static throttledFs = (() => {

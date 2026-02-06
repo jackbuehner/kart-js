@@ -170,6 +170,33 @@ export class Path {
     }
   }
 
+  /**
+   * Reads the directory and yields a Path instance for each directory entry.
+   * @throws {FileNotFoundError} If the directory does not exist.
+   * @throws {FileReadError} If an error occurs while reading an entry in the directory.
+   */
+  async *openDirectory(): AsyncGenerator<Path, void, void> {
+    if (!this.exists) {
+      throw new FileNotFoundError(`Directory does not exist at path: ${this.fullPath}`);
+    }
+
+    if (!this.isDirectory) {
+      throw new FileReadError(`Path is not a directory: ${this.fullPath}`);
+    }
+
+    try {
+      // TODO: once @zenfs/core supports opendir with options, allow passing options here
+      const dir = await opendir(this.fullPath);
+      for await (const dirent of dir) {
+        yield this.join(dirent.name);
+      }
+    } catch (error) {
+      const exposedError = new FileReadError(`Failed to read item in directory at path: ${this.fullPath}`);
+      exposedError.cause = error;
+      throw exposedError;
+    }
+  }
+
   toString() {
     return this.fullPath;
   }
