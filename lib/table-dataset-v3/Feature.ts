@@ -61,39 +61,77 @@ export class Feature {
   /**
    * Creates a new Feature instance from a GeoJSON Feature object.
    *
-   * The GeoJSON feature must have properties and _kart.ids defined.
+   * @remarks
+   * The GeoJSON feature should contain all properties in the schema, including the primary key
+   * properties. Any missing property will be replaced with `null`. Extra properties will
+   * be discarded.
    *
-   * The properties and ids will be validated against the provided schema.
+   * The properties will be validated against the provided schema.
    *
-   * @throws {Error} If the feature does not have properties or _kart.ids defined.
+   * @throws {Error} If the feature does not have properties.
+   * @throws {Error} If the feature does not have a string ID.
+   * @throws {Error} If the feature ID does not match the encoded ID generated from the primary keys and path structure.
    * @throws {AggregateValidationError} If any of the values fail validation against their expected types in the schema. The error will include details about all validation errors encountered during the validation process.
    */
-  static fromGeoJSON(geojsonFeature: KartEnabledFeature<GeometryWithCrs>, schema: Schema, crss: CRSs) {
+  static fromGeoJSON(
+    geojsonFeature: KartEnabledFeature,
+    schema: Schema,
+    pathStructure: PathStructure,
+    crss: CRSs
+  ) {
     if (!geojsonFeature.properties) {
       throw new Error('Feature must have properties to be converted to a RawFeature.');
     }
-
-    if (!geojsonFeature._kart.ids) {
-      throw new Error('Feature must have _kart.ids to be converted to a RawFeature.');
+    if (typeof geojsonFeature.id !== 'string') {
+      throw new Error('Feature must have a string id to be converted to a RawFeature.');
     }
 
-    const ids = new Map<string, unknown>(Object.entries(geojsonFeature._kart.ids));
-    const properties = new Map<string, unknown>(Object.entries(geojsonFeature.properties));
-    properties.set(geojsonFeature._kart.geometryColumn.name, geojsonFeature.geometry);
+    const processedKeys = new Set<string>();
 
-    const feature = new Feature(
-      ids,
-      properties,
-      {
-        geometryColumn: geojsonFeature._kart.geometryColumn,
-        crs: geojsonFeature.geometry.crs?.properties.name ?? null,
-        droppedKeys: [],
-        eid: geojsonFeature._kart.eid,
-      },
-      schema,
-      new Legends([schema.toLegend()]),
-      crss
-    );
+    // We add the IDs in order according the the schema legend since
+    // the order determines how the encoded ID (feature path) is generated.
+    const ids = new Map<string, unknown>();
+    for (const name of schema.primaryKeyNames) {
+      const value = geojsonFeature.properties[name] ?? null;
+      ids.set(name, value);
+      processedKeys.add(name);
+    }
+
+    const properties = new Map<string, unknown>();
+    for (const name of schema.nonPrimaryKeyNames) {
+      const value = geojsonFeature.properties[name] ?? null;
+      properties.set(name, value);
+      processedKeys.add(name);
+    }
+
+    const geometryMetadata = schema.getFeatureGeometryMetadata(crss);
+    if (geometryMetadata.crs && geometryMetadata.geometryColumn) {
+      // Per GeoJSON spec, the CRS is EPSG:4326. An older specification allowed for
+      // specifying the CRS. If a CRS is specified, ensure it matches the schema.
+      const inputGeometryCrs = geojsonFeature.geometry.crs?.properties.name ?? 'EPSG:4326';
+      let geometry = geojsonFeature.geometry;
+      if (inputGeometryCrs !== geometryMetadata.crs) {
+        geometry = reprojectFeature(geojsonFeature, geometryMetadata.crs, crss).geometry;
+      }
+      properties.set(geometryMetadata.geometryColumn.name, geometry);
+      processedKeys.add(geometryMetadata.geometryColumn.name);
+    }
+
+    const eid = pathStructure.getEid(Array.from(ids.values()));
+    if (geojsonFeature.id !== eid) {
+      throw new Error(
+        `Feature ID "${geojsonFeature.id}" does not match the encoded ID "${eid}" generated from the primary keys. Ensure that the feature's primary key properties are correct and that the path structure is configured properly.`
+      );
+    }
+
+    const droppedKeys = Object.keys(geojsonFeature.properties).filter((key) => !processedKeys.has(key));
+    const metadata = {
+      ...geometryMetadata,
+      droppedKeys,
+      eid,
+    };
+
+    const feature = new Feature(ids, properties, metadata, schema, new Legends([schema.toLegend()]), crss);
 
     const result = feature.validate();
     if (!result.ok) {
@@ -208,7 +246,7 @@ export class Feature {
     const geometryWithCrs = geometry as GeometryWithCrs;
     geometryWithCrs.crs = { type: 'name', properties: { name: metadata.crs } };
 
-    const featureProperties: Record<string, unknown> = {};
+    const featureProperties = Object.fromEntries(ids);
     properties.forEach((value, key) => {
       if (key !== geometryColumn.name) {
         featureProperties[key] = value;
@@ -219,17 +257,12 @@ export class Feature {
       {
         type: 'Feature',
         id: metadata.eid,
-        _kart: {
-          ids: Object.fromEntries(ids),
-          eid: metadata.eid,
-          geometryColumn,
-        },
         properties: featureProperties,
         geometry: geometryWithCrs,
-      } as KartEnabledFeature<GeometryWithCrs>,
+      } as KartEnabledFeature,
       'EPSG:4326',
       this.crss
-    ) as KartEnabledFeature<GeometryWithCrs>;
+    ) as KartEnabledFeature;
 
     if (serializable) {
       return makeSerializable(feature);

@@ -1,8 +1,9 @@
-import * as msgpack from '@msgpack/msgpack';
 import { sha256 } from '@noble/hashes/sha2.js';
 import z from 'zod';
 import { FileNotFoundError, InvalidFileContentsError } from '../utils/errors.ts';
 import type { Path } from '../utils/index.ts';
+import { extensionCodec } from './RawFeature.ts';
+import serializer from './serializer.ts';
 
 /**
  * The path structure defines the folder structure and file
@@ -76,7 +77,7 @@ export class PathStructure {
       throw new Error('At least one primary key value is required to compute the path structure.');
     }
 
-    const fileName = msgpack.encode(primaryKeyValues).toBase64();
+    const fileName = serializer.encode(primaryKeyValues, { extensionCodec }).toBase64();
 
     if (this.scheme === 'int') {
       const integer = BigInt(primaryKeyValues[0] as number | bigint);
@@ -98,7 +99,7 @@ export class PathStructure {
    * @returns The folder structure as a string with slashes separating each level.
    */
   private encodeArrayAsFolderStructure(values: unknown[]) {
-    const packed = msgpack.encode(values);
+    const packed = serializer.encode(values, { extensionCodec, useBigInt64: true });
     const hashed = sha256(packed);
 
     // We only need one byte per level in the path structure.

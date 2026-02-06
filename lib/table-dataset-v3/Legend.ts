@@ -1,7 +1,7 @@
-import * as msgpack from '@msgpack/msgpack';
 import z from 'zod';
 import { FileNotFoundError, InvalidFileContentsError } from '../utils/errors.ts';
 import { Enumerable, type Path } from '../utils/index.ts';
+import { extensionCodec } from './RawFeature.ts';
 import serializer from './serializer.ts';
 
 /**
@@ -23,12 +23,12 @@ export class Legend {
   readonly id: string;
 
   /**
-   * An array of primary key column IDs. If there are no primary keys, this will be an empty array.
+   * An ordered array of primary key column IDs. If there are no primary keys, this will be an empty array.
    */
   readonly primaryKeyIds: string[];
 
   /**
-   * An array of non-primary key column IDs. If there are no non-primary keys, this will be an empty array.
+   * An ordered array of non-primary key column IDs. If there are no non-primary keys, this will be an empty array.
    */
   readonly nonPrimaryKeyIds: string[];
 
@@ -94,7 +94,10 @@ export class Legend {
   toBuffer(): ArrayBuffer;
   toBuffer(data: [string[], string[]]): ArrayBuffer;
   toBuffer(data = [this.primaryKeyIds, this.nonPrimaryKeyIds] as [string[], string[]]) {
-    const encoded = msgpack.encode([this.primaryKeyIds, this.nonPrimaryKeyIds]);
+    const encoded = serializer.encode([this.primaryKeyIds, this.nonPrimaryKeyIds], {
+      extensionCodec,
+      useBigInt64: true,
+    });
     return encoded.buffer.slice(encoded.byteOffset, encoded.byteOffset + encoded.byteLength);
   }
 
@@ -124,7 +127,7 @@ export class Legend {
       );
     }
 
-    const decoded = msgpack.decode(new Uint8Array(buffer));
+    const decoded = serializer.decode(new Uint8Array(buffer), { extensionCodec, useBigInt64: true });
     const parsed = legendSchema.parse(decoded);
     return new Legend(parsed.primaryKeyColumns, parsed.nonPrimaryKeyColumns, hash);
   }

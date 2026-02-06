@@ -1,6 +1,7 @@
 import z from 'zod';
 import type { Path } from '../utils/Path.ts';
 import { FileNotFoundError, InvalidFileContentsError } from '../utils/errors.ts';
+import type { CRSs } from './CRS.ts';
 import { Legend } from './Legend.ts';
 
 export type SchemaEntry = z.infer<typeof schemaEntrySchema>;
@@ -36,6 +37,65 @@ export class Schema {
 
     const primaryKeyIds = Array.from(primaryKeyIdsMap.values());
     return new Legend(primaryKeyIds, nonPrimaryKeyIds);
+  }
+
+  /**
+   * The ordered names of the primary key columns in the schema.
+   *
+   * To get the ordered IDs of the primary key columns, use `Schema.toLegend().primaryKeyIds` instead.
+   */
+  get primaryKeyNames() {
+    return this.toLegend().primaryKeyIds.map((id) => {
+      const schemaEntry = this.schemaEntries.find((entry) => entry.id === id);
+      if (!schemaEntry) {
+        throw new Error(`Could not find schema entry for primary key id: ${id}`);
+      }
+      return schemaEntry.name;
+    });
+  }
+
+  /**
+   * The ordered names of the non-primary key columns in the schema.
+   *
+   * To get the ordered IDs of the non-primary key columns, use `Schema.toLegend().nonPrimaryKeyIds` instead.
+   */
+  get nonPrimaryKeyNames() {
+    return this.toLegend().nonPrimaryKeyIds.map((id) => {
+      const schemaEntry = this.schemaEntries.find((entry) => entry.id === id);
+      if (!schemaEntry) {
+        throw new Error(`Could not find schema entry for non-primary key id: ${id}`);
+      }
+      return schemaEntry.name;
+    });
+  }
+
+  /**
+   * Gets the geometry column metadata for the feature based on the schema entries in this Schema.
+   * The metadata includes the geometry column name and the CRS for the geometry column.
+   *
+   * The geometry column used for the feature is the first geometry column in the schema.
+   * See https://github.com/koordinates/kart/blob/eae35e1d06273d9cd2638cefd5fdc50250971aa4/kart/sqlalchemy/adapter/gpkg.py#L269-L289
+   */
+  getFeatureGeometryMetadata(crss: CRSs): FeatureGeometryMetadata {
+    const schemaEntry = this.schemaEntries.find((entry) => entry.dataType === 'geometry');
+
+    const crs = (() => {
+      if (!schemaEntry) {
+        return null;
+      }
+
+      if (!schemaEntry.geometryCrs) {
+        return 'EPSG:4326';
+      }
+
+      return crss.find((crs) => crs.identifier === schemaEntry.geometryCrs)?.identifier ?? null;
+    })();
+
+    if (!schemaEntry) {
+      return { geometryColumn: null, crs };
+    }
+
+    return { geometryColumn: { id: schemaEntry.id, name: schemaEntry.name }, crs };
   }
 
   /**
@@ -558,4 +618,37 @@ export namespace SchemaEntryTypes {
   export type Time = z.infer<typeof timeCol>;
   export type Timestamp = z.infer<typeof timestampCol>;
   export type Geometry = z.infer<typeof geometryCol>;
+}
+
+interface FeatureGeometryMetadata {
+  /**
+   * The primary geometry column used for the feature.
+   *
+   * If there is no geometry column in the schema, this will be null.
+   */
+  geometryColumn: {
+    /**
+     * The ID of the geometry column used for the feature.
+     * The ID never changes over the lifetime of the column, even if the column name changes.
+     *
+     * When working with geojson, use the `name` property instead.
+     */
+    id: string;
+    /**
+     * The name of the geometry column used for the feature.
+     * The name may change over the lifetime of the column, but it is the label that should be used
+     * when working with the contents of a table row/feature.
+     */
+    name: string;
+  } | null;
+  /**
+   * The Coordinate Reference System (CRS) of the feature's geometry.
+   * - Any string value is allowed in this field. It must have a corresponding CRS
+   *     .wkt file in the dataset's /meta/crs folder that defines defines the WKT
+   *     for the CRS.
+   * - If the schema does not have a geometry column, this will be null.
+   * - If the schema's primary geometry column does not specify a CRS, this will be EPSG:4326.
+   * - If the schema's primary geometry column specifies a CRS that cannot be found, this will be null.
+   */
+  crs: string | null;
 }

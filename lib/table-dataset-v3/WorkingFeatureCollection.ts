@@ -4,6 +4,7 @@ import { deepFreeze, Emitter } from '../utils/index.ts';
 import type { CRSs } from './CRS.ts';
 import type { KartDiff } from './diffs.js';
 import { AggregateValidationError, Feature } from './Feature.ts';
+import type { PathStructure } from './PathStructure.ts';
 import type { Schema } from './Schema.ts';
 import { makeSerializable, parse, stringify } from './serializer.ts';
 import type { TableDatasetV3 } from './TableDatasetV3.ts';
@@ -56,7 +57,7 @@ export class WorkingFeatureCollection extends Emitter<{
 
     this.dataset = dataset;
     this.datasetId = dataset.id;
-    this.trackedChanges = new TrackedChanges();
+    this.trackedChanges = new TrackedChanges(this.dataset.schema.primaryKeyNames);
 
     // ensure that all features have the same geometry type
     // const geometryTypes = new Set(
@@ -112,7 +113,7 @@ export class WorkingFeatureCollection extends Emitter<{
     const datasetGeoJSON: KartFeatureCollection = parse(stringify(await this.dataset.toGeoJSON()));
 
     for (const [eid, change] of this.trackedChanges) {
-      const featureIndex = datasetGeoJSON.features.findIndex((f) => f._kart.eid === eid);
+      const featureIndex = datasetGeoJSON.features.findIndex((f) => f.id === eid);
 
       if (change.type === 'delete') {
         if (featureIndex === -1) {
@@ -198,7 +199,12 @@ export class WorkingFeatureCollection extends Emitter<{
       if (
         change.type === 'insert' &&
         isKartEnabledFeature(change.feature) &&
-        checkFeatureCompliance(change.feature, this.dataset.schema, this.dataset.crss).valid
+        checkFeatureCompliance(
+          change.feature,
+          this.dataset.schema,
+          this.dataset.pathStructure,
+          this.dataset.crss
+        ).valid
       ) {
         return change.feature;
       }
@@ -223,7 +229,12 @@ export class WorkingFeatureCollection extends Emitter<{
 
     if (
       originalFeature &&
-      checkFeatureCompliance(originalFeature, this.dataset.schema, this.dataset.crss).valid
+      checkFeatureCompliance(
+        originalFeature,
+        this.dataset.schema,
+        this.dataset.pathStructure,
+        this.dataset.crss
+      ).valid
     ) {
       return originalFeature;
     }
@@ -287,9 +298,13 @@ export class WorkingFeatureCollection extends Emitter<{
     const { valid, errors } = checkFeatureCompliance(
       {
         ...currentFeature,
-        properties: newProperties,
+        properties: {
+          ...originalFeature.properties,
+          ...newProperties,
+        },
       },
       this.dataset.schema,
+      this.dataset.pathStructure,
       this.dataset.crss
     );
     if (!valid) {
@@ -359,7 +374,12 @@ export class WorkingFeatureCollection extends Emitter<{
       );
     }
 
-    const { valid, errors } = checkFeatureCompliance(feature, this.dataset.schema, this.dataset.crss);
+    const { valid, errors } = checkFeatureCompliance(
+      feature,
+      this.dataset.schema,
+      this.dataset.pathStructure,
+      this.dataset.crss
+    );
     if (!valid) {
       throw new Error(
         `Feature to add with ID "${feature.id}" does not comply with the schema: ${errors.join('; ')}`
@@ -378,9 +398,6 @@ export class WorkingFeatureCollection extends Emitter<{
     if (!this.has(featureId)) {
       throw new Error(`Feature with ID "${featureId}" not found.`);
     }
-
-    const originalFeature = this.dataset.get(featureId)?.toGeoJSON() ?? undefined;
-    const primaryKeys = Object.keys(originalFeature?._kart.ids || {}); // no primary keys === no original feature to delete
 
     this.trackedChanges.setDelete(featureId);
     super.emit('feature:deleted', { featureId });
@@ -413,14 +430,15 @@ export class WorkingFeatureCollection extends Emitter<{
               const data: Record<string, unknown> = {};
 
               // always include primary keys first
+              change.feature.properties ??= {};
               for (const key of this.primaryKeys) {
-                data[key] = change.feature._kart.ids[key];
+                data[key] = change.feature.properties[key] ?? null;
               }
               data[this.primaryGeometryKey] = change.feature.geometry;
 
               for (const key of Object.keys(change.feature.properties || {})) {
                 if (data[key] === undefined) {
-                  data[key] = change.feature.properties![key];
+                  data[key] = change.feature.properties[key] ?? null;
                 }
               }
 
@@ -530,6 +548,11 @@ class TrackedChanges implements Omit<
   'set' | 'delete' | 'forEach' | 'entries' | 'values'
 > {
   trackedChanges: Map<string, TrackedChange> = new Map();
+  primaryKeyNames: string[];
+
+  constructor(primaryKeyNames: string[]) {
+    this.primaryKeyNames = primaryKeyNames;
+  }
 
   clear() {
     this.trackedChanges.clear();
@@ -595,6 +618,8 @@ class TrackedChanges implements Omit<
 
   /**
    * Track the insertion of a new feature.
+   *
+   * IMPORTANT: Make sure that the feature ID (key) (eid) matches the primary keys included in the feature properties.
    */
   setInsert(key: string, value: Omit<TrackedInsert, 'type'>): this {
     this.trackedChanges.set(key, { type: 'insert', ...value });
@@ -633,8 +658,22 @@ class TrackedChanges implements Omit<
    * the original feature, not since the last update.
    *
    * DO NOT pass the full set of properties.
+   *
+   * DO NOT update primary keys using this method. To update primary keys,
+   * delete the feature, calculate the new feature ID based on the new primary keys,
+   * and then insert the new feature.
    */
   setProperties(key: string, value: Omit<TrackedPropertiesUpdate, 'type'>): this {
+    // if primary keys are being changed, the consumer needs to delete and insert instead
+    value.properties ??= {};
+    for (const primaryKey of this.primaryKeyNames) {
+      if (primaryKey in value.properties) {
+        throw new Error(
+          `Cannot update primary key "${primaryKey}" using setProperties. To change primary keys, delete the feature and insert a new one instead.`
+        );
+      }
+    }
+
     if (!this.has(key)) {
       this.trackedChanges.set(key, { type: 'update', ...value });
       return this;
@@ -665,9 +704,14 @@ class TrackedChanges implements Omit<
   }
 }
 
-function checkFeatureCompliance(feature: KartEnabledFeature<GeometryWithCrs>, schema: Schema, crss: CRSs) {
+function checkFeatureCompliance(
+  feature: KartEnabledFeature,
+  schema: Schema,
+  pathStructure: PathStructure,
+  crss: CRSs
+) {
   try {
-    Feature.fromGeoJSON(feature, schema, crss);
+    Feature.fromGeoJSON(feature, schema, pathStructure, crss);
     return { valid: true, errors: [] };
   } catch (error) {
     if (error instanceof AggregateValidationError) {

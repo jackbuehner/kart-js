@@ -1,5 +1,9 @@
-import * as msgpack from '@msgpack/msgpack';
-import { decodeTimestampToTimeSpec, encodeTimeSpecToTimestamp, EXT_TIMESTAMP } from '@msgpack/msgpack';
+import {
+  decodeTimestampToTimeSpec,
+  encodeTimeSpecToTimestamp,
+  EXT_TIMESTAMP,
+  ExtensionCodec,
+} from '@msgpack/msgpack';
 import { GeoPackageGeometryData } from '@ngageoint/geopackage/dist/lib/geom/geoPackageGeometryData.js';
 import { FeatureConverter } from '@ngageoint/simple-features-geojson-js/dist/lib/FeatureConverter.js';
 import { Temporal } from 'temporal-polyfill';
@@ -13,6 +17,7 @@ import { Feature } from './Feature.ts';
 import type { Legends } from './Legend.ts';
 import type { PathStructure } from './PathStructure.ts';
 import type { Schema } from './Schema.ts';
+import serializer from './serializer.ts';
 
 /**
  * A raw feature represents a feature as it is stored on disk in a Kart Table Dataset V3.
@@ -106,41 +111,12 @@ export class RawFeature {
         processedKeyIds.add(id);
       });
 
-    // The geometry column used for the feature is the first geometry column in the schema.
-    // @see https://github.com/koordinates/kart/blob/eae35e1d06273d9cd2638cefd5fdc50250971aa4/kart/sqlalchemy/adapter/gpkg.py#L269-L289
-    const featureGeometryColumn = schema.find((entry) => entry.dataType === 'geometry');
-
     const eid = pathStructure.getEid(Array.from(ids.values()));
 
+    const geometryMetadata = schema.getFeatureGeometryMetadata(crss);
+
     const metadata = {
-      /**
-       * The primary geometry column used for the feature.
-       *
-       * This is the first geometry column in the schema or `null` if there is no geometry column.
-       */
-      geometryColumn: featureGeometryColumn
-        ? { id: featureGeometryColumn.id, name: featureGeometryColumn.name }
-        : null,
-      /**
-       * The Coordinate Reference System (CRS) of the feature's geometry.
-       * - Any string value is allowed in this field. It must have a corresponding CRS
-       *     .wkt file in the dataset's /meta/crs folder that defines defines the WKT
-       *     for the CRS.
-       * - If the schema does not have a geometry column, this will be null.
-       * - If the schema's primary geometry column does not specify a CRS, this will be EPSG:4326.
-       * - If the schema's primary geometry column specifies a CRS that cannot be found, this will be null.
-       */
-      crs: (() => {
-        if (!featureGeometryColumn) {
-          return null;
-        }
-
-        if (!featureGeometryColumn.geometryCrs) {
-          return 'EPSG:4326';
-        }
-
-        return crss.find((crs) => crs.identifier === featureGeometryColumn.geometryCrs)?.identifier ?? null;
-      })(),
+      ...geometryMetadata,
       /**
        * An array of column IDs that were present in the legend but not in the current schema.
        * These columns have been dropped during the upgrade process.
@@ -182,11 +158,11 @@ export class RawFeature {
     }
 
     const msgpackEncodedName = Uint8Array.fromBase64(filePath.name, { alphabet: 'base64url' });
-    const primaryKeyDataDecoded = msgpack.decode(msgpackEncodedName);
+    const primaryKeyDataDecoded = serializer.decode(msgpackEncodedName, { extensionCodec, useBigInt64: true });
     const primaryKeyData = z.unknown().array().parse(primaryKeyDataDecoded);
 
     const fileContents = filePath.readFileSync();
-    const propertiesDecoded = msgpack
+    const propertiesDecoded = serializer
       .decodeMulti(fileContents, { extensionCodec, useBigInt64: true })
       .next().value; // decodeMulti allows us to ignore extra trailing bytes
     const [legendId, properties] = rawFeatureFileDataSchema.parse(propertiesDecoded);
@@ -197,12 +173,12 @@ export class RawFeature {
 
 export class RawFeatures extends Enumerable<RawFeature> {}
 
-const extensionCodec = new msgpack.ExtensionCodec();
+export const extensionCodec = new ExtensionCodec();
 extensionCodec.register({
   type: 71, // 'G'
   encode: (data) => {
     if (!isGeoJsonFeature(data)) {
-      throw new Error('Data is not a GeoJSON Feature object.');
+      return null;
     }
     return convertGeometryToWkb(data.geometry);
   },

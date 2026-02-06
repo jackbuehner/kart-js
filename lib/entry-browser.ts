@@ -2,6 +2,7 @@ import './shims/loadShims.ts'; // this MUST be first to avoid @zenfs/core's inco
 
 export { TableDatasetV3 } from './table-dataset-v3/TableDatasetV3.ts';
 export { type TrackedChange } from './table-dataset-v3/WorkingFeatureCollection.ts';
+export * from './utils/features/index.ts';
 
 import { mount, resolveMountConfig } from '@zenfs/core';
 import { IndexedDB } from '@zenfs/dom';

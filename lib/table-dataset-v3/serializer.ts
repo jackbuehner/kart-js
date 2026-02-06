@@ -1,3 +1,4 @@
+import * as msgpack from '@msgpack/msgpack';
 import { sha256 } from '@noble/hashes/sha2.js';
 import * as JSON from '@ungap/raw-json';
 import * as devalue from 'devalue';
@@ -127,9 +128,44 @@ export function hexHash(data: string | Uint8Array | ArrayBuffer) {
   return sha256(bytes).slice(0, 20).toHex();
 }
 
+function encode(value: unknown, options?: msgpack.EncoderOptions<undefined> | undefined) {
+  function normalize(value: unknown): unknown {
+    // Kart does not store bigints, so we need to just convert them to ints
+    if (typeof value === 'bigint') {
+      return value <= Number.MAX_SAFE_INTEGER && value >= Number.MIN_SAFE_INTEGER ? Number(value) : value;
+    }
+    if (Array.isArray(value)) return value.map(normalize);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, normalize(v)]));
+    }
+    return value;
+  }
+  return msgpack.encode(normalize(value), { useBigInt64: true, ...options });
+}
+
+function decode(data: Uint8Array, options?: msgpack.DecoderOptions<undefined> | undefined) {
+  return msgpack.decode(data, { useBigInt64: true, ...options });
+}
+
+function decodeMulti(data: Uint8Array, options?: msgpack.DecoderOptions<undefined> | undefined) {
+  return msgpack.decodeMulti(data, { useBigInt64: true, ...options });
+}
+
 export default {
   stringify,
   parse,
   serializeJson,
   hexHash,
+  /**
+   * Decodes MessagePack-encoded data.
+   */
+  decode,
+  /**
+   * Decodes multiple MessagePack-encoded values from a single Uint8Array.
+   */
+  decodeMulti,
+  /**
+   * Encodes a value using MessagePack encoding.
+   */
+  encode,
 };
