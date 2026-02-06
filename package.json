@@ -1,6 +1,6 @@
 {
   "name": "kart-js",
-  "version": "1.0.0-alpha.4",
+  "version": "1.0.0-alpha.5",
   "description": "A JavaScript implmentation of Kart: Distributed version-control for geospatial and tabular data",
   "type": "module",
   "exports": {
