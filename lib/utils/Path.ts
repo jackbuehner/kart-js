@@ -143,6 +143,33 @@ export class Path {
     }
   }
 
+  /**
+   * Reads the directory and returns an array of Path instances for each entry.
+   * @throws {FileNotFoundError} If the directory does not exist.
+   * @throws {FileReadError} If the directory cannot be read.
+   */
+  async readDirectory(options?: { recursive?: boolean; encoding?: BufferEncoding }): Promise<Path[]> {
+    if (!this.exists) {
+      throw new FileNotFoundError(`Directory does not exist at path: ${this.fullPath}`);
+    }
+
+    if (!this.isDirectory) {
+      throw new FileReadError(`Path is not a directory: ${this.fullPath}`);
+    }
+
+    try {
+      return await readdir(this.fullPath, { recursive: options?.recursive, encoding: 'utf-8' }).then(
+        (names) => {
+          return names.map((name) => this.join(name));
+        }
+      );
+    } catch (error) {
+      const exposedError = new FileReadError(`Failed to read directory at path: ${this.fullPath}`);
+      exposedError.cause = error;
+      throw exposedError;
+    }
+  }
+
   toString() {
     return this.fullPath;
   }
