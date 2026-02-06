@@ -36,6 +36,19 @@ export class Data {
   }
 
   /**
+   * Deletes the dataset with the given name from the repository.
+   */
+  async delete(name: string) {
+    if (!this.has(name)) {
+      throw new Error(`Dataset with name "${name}" does not exist or is not a valid table dataset v3.`);
+    }
+
+    const dataset = this.get(name);
+    await dataset.path.rm({ recursive: true, force: true });
+    this.datatsets.delete(name);
+  }
+
+  /**
    * An async interator for interating over each validated
    * dataset in the repository.
    */

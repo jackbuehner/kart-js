@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from '@zenfs/core';
 import * as path from '@zenfs/core/path';
+import { opendir, readdir, rm } from '@zenfs/core/promises';
 import { FileNotFoundError, FileReadError } from './errors.ts';
 
 export class Path {
@@ -41,13 +42,14 @@ export class Path {
   get basename(): string {
     const dirParts = this.fullPath.split('/');
     const fileName = dirParts[dirParts.length - 1];
+    if (!fileName) return '';
     const dotIndex = fileName.lastIndexOf('.');
     return dotIndex === -1 ? fileName : fileName.substring(0, dotIndex);
   }
 
   get name(): string {
     const dirParts = this.fullPath.split('/');
-    return dirParts[dirParts.length - 1];
+    return dirParts[dirParts.length - 1] ?? '';
   }
 
   get parentPath(): Path | null {
@@ -65,6 +67,7 @@ export class Path {
   get extension(): string {
     const dirParts = this.fullPath.split('/');
     const fileName = dirParts[dirParts.length - 1];
+    if (!fileName) return '';
     const dotIndex = fileName.lastIndexOf('.');
     return dotIndex === -1 ? '' : fileName.substring(dotIndex + 1);
   }
@@ -210,5 +213,12 @@ export class Path {
    */
   relativeTo(to: Path): string {
     return path.relative(this.absolute, to.absolute).replaceAll('\\', '/');
+  }
+
+  /**
+   * Removes the file or directory at this path.
+   */
+  async rm(options?: { recursive?: boolean; force?: boolean }) {
+    return await rm(this.fullPath, options);
   }
 }
