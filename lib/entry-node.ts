@@ -4,8 +4,71 @@ export { TableDatasetV3 } from './table-dataset-v3/TableDatasetV3.ts';
 export { WorkingFeatureCollection } from './table-dataset-v3/WorkingFeatureCollection.ts';
 
 import { configureSingle, Passthrough, PassthroughFS, type PassthroughOptions } from '@zenfs/core';
-import fs from 'node:fs';
+import { exec } from 'node:child_process';
+import nodeFS from 'node:fs';
+import { promisify } from 'node:util';
 import { Kart as _Kart } from './Kart.ts';
+
+// Windows does not allow case-sensitive files and directories by default.
+// Since the git repositorys Kart works with may contain files or directories
+// that only differ by case, we need to enable case-sensitivity on Windows.
+// This wrapper around the NodeFS adds this functionality.
+const fs = (() => {
+  async function enableCaseSensitivity(path: string | Buffer | URL) {
+    if (process.platform !== 'win32') return;
+    try {
+      console.log(`Enabling case sensitivity for path: ${path.toString()}`);
+      return new Promise<void>((resolve, reject) => {
+        exec(`fsutil.exe file setCaseSensitiveInfo "${path.toString()}" enable`, (error, stdout, stderr) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+    } catch (error) {
+      throw new Error(
+        `Failed to enable case sensitivity for path: ${path.toString()}. Reason: ${(error as Error).message}`
+      );
+    }
+  }
+
+  return {
+    ...nodeFS,
+    mkdir: Object.assign(
+      (path: nodeFS.PathLike, ...args: any[]) => {
+        const callback = args[args.length - 1];
+        if (typeof callback === 'function') {
+          const wrappedCallback = (err: Error | null, pathCreated?: string) => {
+            if (!err) {
+              enableCaseSensitivity(path).finally(() => callback(err, pathCreated));
+            } else {
+              callback(err, pathCreated);
+            }
+          };
+          args[args.length - 1] = wrappedCallback;
+        }
+        return (nodeFS.mkdir as any)(path, ...args);
+      },
+      {
+        __promisify__: async (path: nodeFS.PathLike, options?: nodeFS.MakeDirectoryOptions) => {
+          const result = await promisify(fs.mkdir)(path, options);
+          await enableCaseSensitivity(path);
+          return result;
+        },
+      }
+    ),
+    promises: {
+      ...nodeFS.promises,
+      mkdir: async (path: nodeFS.PathLike, options?: nodeFS.MakeDirectoryOptions) => {
+        const result = await nodeFS.promises.mkdir(path, options);
+        await enableCaseSensitivity(path);
+        return result;
+      },
+    },
+  } as typeof nodeFS;
+})();
 
 let hasInitialized = false;
 async function init() {
@@ -46,13 +109,33 @@ export class Kart extends _Kart {
  */
 class EncodedSpecialCharactersFS extends PassthroughFS {
   private readonly COLON_REPLACEMENT = '__COLON__';
+  private readonly QUOTE_REPLACEMENT = '__QUOTE__';
+  private readonly ASTERISK_REPLACEMENT = '__ASTERISK__';
+  private readonly QUESTION_REPLACEMENT = '__QUESTION__';
+  private readonly LESS_THAN_REPLACEMENT = '__LESS_THAN__';
+  private readonly GREATER_THAN_REPLACEMENT = '__GREATER_THAN__';
+  private readonly PIPE_REPLACEMENT = '__PIPE__';
 
   private encode(path: string) {
-    return path.replaceAll(':', this.COLON_REPLACEMENT);
+    return path
+      .replaceAll(':', this.COLON_REPLACEMENT)
+      .replaceAll('"', this.QUOTE_REPLACEMENT)
+      .replaceAll('*', this.ASTERISK_REPLACEMENT)
+      .replaceAll('?', this.QUESTION_REPLACEMENT)
+      .replaceAll('<', this.LESS_THAN_REPLACEMENT)
+      .replaceAll('>', this.GREATER_THAN_REPLACEMENT)
+      .replaceAll('|', this.PIPE_REPLACEMENT);
   }
 
   private decode(path: string) {
-    return path.replaceAll(this.COLON_REPLACEMENT, ':');
+    return path
+      .replaceAll(this.COLON_REPLACEMENT, ':')
+      .replaceAll(this.QUOTE_REPLACEMENT, '"')
+      .replaceAll(this.ASTERISK_REPLACEMENT, '*')
+      .replaceAll(this.QUESTION_REPLACEMENT, '?')
+      .replaceAll(this.LESS_THAN_REPLACEMENT, '<')
+      .replaceAll(this.GREATER_THAN_REPLACEMENT, '>')
+      .replaceAll(this.PIPE_REPLACEMENT, '|');
   }
 
   override path(path: string): string {

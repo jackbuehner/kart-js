@@ -8,6 +8,10 @@ import {
   fetch as gitFetch,
   listRemotes,
   resolveRef,
+  STAGE,
+  TREE,
+  walk,
+  WORKDIR,
   writeRef,
 } from 'isomorphic-git';
 import pLimit from 'p-limit';
@@ -47,10 +51,9 @@ export class Kart {
 
     const wrap = (obj: any) => {
       const wrapper: any = {};
-      for (const key in obj) {
+      for (const key of Object.keys(obj)) {
         if (typeof obj[key] === 'function') {
           wrapper[key] = (...args: any[]) => {
-            // console.log('Accessing fs method:', key);
             return limit(() => obj[key](...args));
           };
         }
@@ -127,8 +130,15 @@ export class Kart {
         ref: defaultBranch,
       });
       if (remoteHash === localHash) {
-        console.log('  Repository is already up to date.');
-        return new Kart(dir);
+        console.log('  Checking for local changes...');
+        const foundDirtyFilePath = await this.getFirstFoundDirtyFile(dir);
+        if (foundDirtyFilePath) {
+          console.log(`    Found mismatch for file: ${foundDirtyFilePath}`);
+          console.log('  Discarding local changes...');
+        } else {
+          console.log('  No local changes found. Repository is up to date.');
+          return new Kart(dir);
+        }
       }
 
       // hard reset to remote state
@@ -140,7 +150,6 @@ export class Kart {
         force: true,
       });
 
-      console.log('Checking out latest changes...');
       await checkout({ fs: this.throttledFs, dir, ref: defaultBranch, force: true, onProgress });
       return new Kart(dir);
     }
@@ -158,6 +167,73 @@ export class Kart {
       onProgress,
     });
     return new Kart(dir);
+  }
+
+  /**
+   * Searches the given directory for the first file that has uncommitted changes.
+   *
+   * This is useful for checking whether a directory is dirty without needing
+   * to scan entire directory. If the directory is clean, this method will
+   * still scan the entire directory and its subdirectories.
+   */
+  private static async getFirstFoundDirtyFile(dir: string) {
+    let dirtyFilePath: string | undefined = undefined;
+    try {
+      await walk({
+        fs: this.throttledFs,
+        dir,
+        trees: [TREE({ ref: 'HEAD' }), WORKDIR(), STAGE()],
+        map: async (filepath, [head, workdir, stage]) => {
+          if (filepath.startsWith('.git/')) {
+            return;
+          }
+
+          // Skip directories - status() is intended for files
+          // In walk, if an entry is a directory, its type is 'tree'
+          const [headType, workdirType, stageType] = await Promise.all([
+            head?.type(),
+            workdir?.type(),
+            stage?.type(),
+          ]);
+          if (headType === 'tree' || workdirType === 'tree' || stageType === 'tree') {
+            return;
+          }
+
+          // Compare Object IDs to detect changes
+          const [headOid, workdirOid, stageOid] = await Promise.all([
+            head?.oid(),
+            workdir?.oid(),
+            stage?.oid(),
+          ]);
+
+          let reason = 'unmodified';
+          if (!headOid && (workdirOid || stageOid)) {
+            reason = 'added';
+          } else if (headOid && !workdirOid && !stageOid) {
+            reason = 'deleted';
+          } else if (headOid && workdirOid !== headOid) {
+            reason = 'modified';
+          } else if (headOid && stageOid !== headOid) {
+            reason = 'staged';
+          }
+
+          if (reason !== 'unmodified') {
+            dirtyFilePath = filepath;
+            // console.log(`  Found dirty file: ${filepath}`);
+            // console.log(`    Reason: ${reason}`);
+
+            throw new Error('__Interrupt__');
+          }
+
+          return filepath;
+        },
+      });
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== '__Interrupt__') {
+        throw error;
+      }
+    }
+    return dirtyFilePath as string | undefined;
   }
 
   async getCurrentCommit() {
