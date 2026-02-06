@@ -84,11 +84,14 @@ export class Kart {
       }
     })();
 
+    console.log(`Pulling repository from ${url} into ${dir}...`);
     const info = await getRemoteInfo({
       http,
+      corsProxy,
       url,
     });
     const defaultBranch = info.HEAD?.replace('refs/heads/', '') || 'main';
+    console.debug(`  Default branch is "${defaultBranch}"`);
 
     let repoExists = false;
     if (existsSync(dir)) {
