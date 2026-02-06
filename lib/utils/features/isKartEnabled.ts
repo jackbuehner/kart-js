@@ -16,8 +16,8 @@ export function isKartEnabledFeature(feature: GeoJSON.Feature): feature is KartE
     feature._kart.ids !== null &&
     Object.keys(feature._kart.ids).length > 0 &&
     Object.keys(feature._kart.ids).every((key) => typeof key === 'string') &&
-    'path' in feature._kart &&
-    typeof feature._kart.path === 'string' &&
+    'eid' in feature._kart &&
+    typeof feature._kart.eid === 'string' &&
     'geometryColumn' in feature._kart &&
     typeof feature._kart.geometryColumn === 'object' &&
     feature._kart.geometryColumn !== null &&

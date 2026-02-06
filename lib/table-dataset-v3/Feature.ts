@@ -82,8 +82,7 @@ export class Feature {
         geometryColumn: geojsonFeature._kart.geometryColumn,
         crs: geojsonFeature.geometry.crs?.properties.name ?? null,
         droppedKeys: [],
-        fileName: geojsonFeature.id?.toString() ?? '',
-        path: geojsonFeature._kart.path,
+        eid: geojsonFeature._kart.eid,
       },
       schema,
       new Legends([schema.toLegend()]),
@@ -208,10 +207,10 @@ export class Feature {
     return reprojectFeature(
       {
         type: 'Feature',
-        id: metadata.fileName,
+        id: metadata.eid,
         _kart: {
           ids: Object.fromEntries(ids),
-          path: metadata.path,
+          eid: metadata.eid,
           geometryColumn,
         },
         properties: featureProperties,

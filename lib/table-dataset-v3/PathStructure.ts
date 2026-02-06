@@ -8,8 +8,8 @@ import type { Path } from '../utils/index.ts';
  * The path structure defines the folder structure and file
  * naming convention for feature files in a Kart Table Dataset V3.
  *
- * To get the path structure for a specific feature, use the
- * `getStructure` method with the feature's primary key values.
+ * To get the encoded path structure for a specific feature, use the
+ * `getEid` method with the feature's primary key values.
  *
  * To read a path structure file, use `PathStructure.fromFile(filePath)`.
  */
@@ -46,16 +46,16 @@ export class PathStructure {
   }
 
   /**
-   * Gets the path structure for a given set of primary key values
+   * Gets the encoded path structure (encoded ID) for a given set of primary key values
    * based on the path structure's scheme, branches, levels, and encoding.
    *
-   * The path structure is the folder structure and file name for a feature
+   * The encoded path structure is the folder structure and file name for a feature
    * file in a Kart Table Dataset V3.
    *
    * For more details and examples, refer to the feature paths documentation.
    * @see https://docs.kartproject.org/en/latest/pages/development/table_v3.html#feature-paths
    */
-  getStructure(primaryKeyValues: unknown[]) {
+  getEid(primaryKeyValues: unknown[]) {
     if (this.scheme === 'int') {
       const isCorrectLength = primaryKeyValues.length === 1;
       if (!isCorrectLength) {
@@ -266,6 +266,7 @@ export class PathStructure {
 }
 
 type PathStructureData = z.infer<typeof pathStructureSchema>;
+export type PathStructureEid = string;
 
 const pathStructureSchema = z
   .object({

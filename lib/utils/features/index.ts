@@ -20,7 +20,7 @@ export type KartEnabledFeature<G extends Geometry | null = Geometry, P = GeoJson
   id: string;
   _kart: {
     ids: { [k: string]: unknown };
-    path: string;
+    eid: string;
     geometryColumn: {
       id: string;
       name: string;

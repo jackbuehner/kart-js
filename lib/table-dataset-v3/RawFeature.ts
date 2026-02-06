@@ -110,7 +110,7 @@ export class RawFeature {
     // @see https://github.com/koordinates/kart/blob/eae35e1d06273d9cd2638cefd5fdc50250971aa4/kart/sqlalchemy/adapter/gpkg.py#L269-L289
     const featureGeometryColumn = schema.find((entry) => entry.dataType === 'geometry');
 
-    const path = pathStructure.getStructure(Array.from(ids.values()));
+    const eid = pathStructure.getEid(Array.from(ids.values()));
 
     const metadata = {
       /**
@@ -149,13 +149,10 @@ export class RawFeature {
         .filter(({ columnId }) => !processedKeyIds.has(columnId))
         .map(({ columnId }) => columnId),
       /**
-       * The path for the feature, which is determined by the path structure of the dataset and the feature's primary key values.
+       * The encoded ID for the feature, which is determined by the path structure of the dataset and the feature's primary key values.
+       * It never starts with a leading slash, and it is relative to the dataset feature storage root.
        */
-      path: path,
-      /**
-       * The file name for the feature.
-       */
-      fileName: path.split('/').slice(-1)[0],
+      eid,
     } as const;
 
     return {
