@@ -1,4 +1,6 @@
 import Flatbush from 'flatbush';
+import type { Kart } from '../Kart.ts';
+import { GitTree } from '../utils/Path.ts';
 import type { KartFeatureCollection } from '../utils/features/index.ts';
 import { Path } from '../utils/index.ts';
 import { CRS, CRSs } from './CRS.ts';
@@ -11,8 +13,8 @@ import { WorkingFeatureCollection } from './WorkingFeatureCollection.ts';
 import serializer from './serializer.ts';
 
 export class TableDatasetV3 {
-  readonly path: Path;
-  readonly metaPath: Path;
+  readonly tree: GitTree;
+  readonly generatedPath: Path;
 
   readonly type = 'table-dataset-v3';
   readonly id: string;
@@ -36,33 +38,61 @@ export class TableDatasetV3 {
 
   private cache: TableDatasetV3Cache = {};
 
-  constructor(repoPath: Path, id: string) {
-    if (!TableDatasetV3.isValidDataset(repoPath, id)) {
-      throw new Error(`Dataset with id "${id}" does not exist or is not a valid table dataset v3.`);
-    }
-
-    this.path = repoPath.join(id);
+  private constructor(
+    id: string,
+    title: string,
+    tree: GitTree,
+    generatedPath: Path,
+    pathStructure: PathStructure,
+    schema: Schema,
+    description: string | undefined,
+    legends: Legends,
+    crss: CRSs,
+    featureCount: number
+  ) {
+    this.tree = tree;
     this.id = id;
+    this.generatedPath = generatedPath;
+    this.title = title;
+    this.pathStructure = pathStructure;
+    this.schema = schema;
+    this.description = description;
+    this.legends = legends;
+    this.crss = crss;
+    this.featureCount = featureCount;
+    this.working = new WorkingFeatureCollection(this);
+  }
 
-    const metaPath = this.path.parentPath?.parentPath?.join('.kartjs', this.id);
-    if (!metaPath) {
-      throw new Error('Failed to get .kartjs path.');
+  static async create(core: Kart, id: string): Promise<TableDatasetV3> {
+    // this is where files for this dataset that are generated and not version-controlled are stored
+    const generatedPath = core.repoDir.join(core.repoTree.ref, id);
+    if (!generatedPath.exists) {
+      generatedPath.makeDirectory({ recursive: true });
     }
-    metaPath.makeDirectory({ recursive: true });
-    this.metaPath = metaPath;
+
+    const tree = core.repoTree.join(id);
+    const featureDirectoryTree = tree.join('.table-dataset', 'feature');
 
     try {
-      const validatedContents = TableDatasetV3.getValidatedContents(repoPath, id);
+      const validatedContents = await TableDatasetV3.getValidatedContents(core.repoTree, id);
       if (!validatedContents) {
-        throw new Error('Could not validate dataset contents.');
+        throw new Error(`Dataset with id "${id}" does not exist or is not a valid table dataset v3.`);
       }
-      this.title = validatedContents.title;
-      this.pathStructure = validatedContents.pathStructure;
-      this.schema = validatedContents.schema;
-      this.description = validatedContents.description;
-      this.legends = validatedContents.legends;
-      this.crss = validatedContents.crss;
-      this.featureCount = this.getFeatureCount();
+
+      const featureCount = await this.getFeatureCount(featureDirectoryTree);
+
+      return new TableDatasetV3(
+        id,
+        validatedContents.title,
+        tree,
+        generatedPath,
+        validatedContents.pathStructure,
+        validatedContents.schema,
+        validatedContents.description,
+        validatedContents.legends,
+        validatedContents.crss,
+        featureCount
+      );
     } catch (error) {
       const toThrow = new Error(`Dataset with id "${id}" has invalid contents: ${(error as Error).message}`);
       if (error instanceof Error) {
@@ -72,30 +102,27 @@ export class TableDatasetV3 {
       }
       throw toThrow;
     }
-
-    // this.working = new WorkingFeatureCollection(this.id, this.toFeatureCollection(), this.schema, this.crss);
-    this.working = new WorkingFeatureCollection(this);
   }
 
-  static isValidDataset(repoDir: Path, id: string, validateContents = false) {
-    const folderExists = repoDir.readDirectorySync().findIndex((item) => item.name === id) !== -1;
-    if (!folderExists) {
+  static async isValidDataset(repoTree: GitTree, id: string, validateContents = false) {
+    const datasetTree = repoTree.join(id);
+    if (!(await datasetTree.exists)) {
       return false;
     }
 
     // table datasets MUST have a .table-dataset folder inside their root folder that contains at least the feature and meta folders
-    const tableDatasetPath = repoDir.join(id, '.table-dataset');
-    if (!tableDatasetPath.exists) {
+    const tableDatasetPath = datasetTree.join('.table-dataset');
+    if (!(await tableDatasetPath.exists)) {
       return false;
     }
 
-    const tableDatasetContents = tableDatasetPath.readDirectorySync();
+    const tableDatasetContents = await tableDatasetPath.readDirectory();
     const hasMetaFolder = tableDatasetContents.findIndex((item) => item.name === 'meta') !== -1;
     if (!hasMetaFolder) {
       return false;
     }
 
-    const metaFolderContents = tableDatasetPath.join('meta').readDirectorySync();
+    const metaFolderContents = await tableDatasetPath.join('meta').readDirectory();
     const hasTitleFile = metaFolderContents.findIndex((file) => file.name === 'title') !== -1;
     const hasSchemaFile = metaFolderContents.findIndex((file) => file.name === 'schema.json') !== -1;
     const hasPathStructureFile =
@@ -108,7 +135,7 @@ export class TableDatasetV3 {
     if (!hasLegendFolder) {
       return false;
     }
-    const hasAtLeastOneLegendFile = tableDatasetPath.join('meta', 'legend').readDirectorySync().length > 0;
+    const hasAtLeastOneLegendFile = (await tableDatasetPath.join('meta', 'legend').readDirectory()).length > 0;
     if (!hasAtLeastOneLegendFile) {
       return false;
     }
@@ -118,51 +145,62 @@ export class TableDatasetV3 {
     }
 
     try {
-      this.getValidatedContents(repoDir, id);
+      this.getValidatedContents(repoTree, id);
       return true;
     } catch {
       return false;
     }
   }
 
-  private static getValidatedContents(repoDir: Path, id: string) {
-    if (!TableDatasetV3.isValidDataset(repoDir, id, false)) {
+  private static async getValidatedContents(repoTree: GitTree, id: string) {
+    const isValidShape = await TableDatasetV3.isValidDataset(repoTree, id, false);
+    if (!isValidShape) {
       return;
     }
 
-    const titleFilePath = repoDir.join(id, '.table-dataset', 'meta', 'title');
-    const title = titleFilePath.readFileSync({ encoding: 'utf-8' }).trim();
+    const titleFilePath = repoTree.join(id, '.table-dataset', 'meta', 'title');
+    const title = await titleFilePath.readFile({ encoding: 'utf-8' }).then((text) => text.trim());
 
-    const descriptionFilePath = repoDir.join(id, '.table-dataset', 'meta', 'description');
+    const descriptionFilePath = repoTree.join(id, '.table-dataset', 'meta', 'description');
     let description: string | undefined = undefined;
-    if (descriptionFilePath.exists && descriptionFilePath.isFile) {
-      description = descriptionFilePath.readFileSync({ encoding: 'utf-8' }).trim();
+    if (await descriptionFilePath.isFile) {
+      description = await descriptionFilePath.readFile({ encoding: 'utf-8' }).then((text) => text.trim());
     }
 
-    const pathStructurePath = repoDir.join(id, '.table-dataset', 'meta', 'path-structure.json');
-    const pathStructure = PathStructure.fromFile(pathStructurePath);
+    const pathStructurePath = repoTree.join(id, '.table-dataset', 'meta', 'path-structure.json');
+    const pathStuctureBuffer = await pathStructurePath.readFile();
+    const pathStructure = PathStructure.fromBuffer(pathStuctureBuffer);
 
-    const schemaFilePath = repoDir.join(id, '.table-dataset', 'meta', 'schema.json');
-    const schema = Schema.fromFile(schemaFilePath);
+    const schemaFilePath = repoTree.join(id, '.table-dataset', 'meta', 'schema.json');
+    const schemaBuffer = await schemaFilePath.readFile();
+    const schema = Schema.fromBuffer(schemaBuffer);
 
-    const legendDirPath = repoDir.join(id, '.table-dataset', 'meta', 'legend');
-    const legendFiles = legendDirPath.readDirectorySync();
+    const legendDirPath = repoTree.join(id, '.table-dataset', 'meta', 'legend');
+    const legendFiles = await legendDirPath.readDirectory();
     const legends = new Legends();
-    for (const legendFile of legendFiles) {
-      const legend = Legend.fromFile(legendFile);
+    for (const fileInfo of legendFiles) {
+      const legendFile = legendDirPath.join(fileInfo.name);
+      const legendFileBuffer = await legendFile.readFile();
+      const legend = Legend.fromBuffer(legendFileBuffer);
       legends.add(legend);
     }
 
     const crss = new CRSs();
-    const hasCrsFolder = repoDir.join(id, '.table-dataset', 'meta', 'crs').exists;
+    const hasCrsFolder = await repoTree.join(id, '.table-dataset', 'meta', 'crs').isDirectory;
     if (hasCrsFolder) {
-      repoDir
+      await repoTree
         .join(id, '.table-dataset', 'meta', 'crs')
-        .readDirectorySync()
-        .filter((path) => path.isFile)
-        .filter((filePath) => filePath.extension === 'wkt')
-        .forEach((wktFilePath) => {
-          crss.add(CRS.fromWktFile(wktFilePath));
+        .readDirectory()
+        .then((paths) => {
+          const promises = paths
+            .filter((path) => path.isFile)
+            .filter((filePath) => filePath.extension === 'wkt')
+            .map(async (wktFileInfo) => {
+              const wktFilePath = repoTree.join(id, '.table-dataset', 'meta', 'crs', wktFileInfo.name);
+              const wktFileBuffer = await wktFilePath.readFile();
+              crss.add(CRS.fromWktBuffer(wktFileInfo.name, wktFileBuffer));
+            });
+          return Promise.all(promises);
         });
     }
 
@@ -176,74 +214,20 @@ export class TableDatasetV3 {
     };
   }
 
-  private get featureDirectoryPath() {
-    return this.path.join('.table-dataset', 'feature');
+  private get featureDirectoryTree() {
+    return this.tree.join('.table-dataset', 'feature');
   }
 
   /**
    * Counts the number of files in the feature directory.
    */
-  private getFeatureCount() {
-    if (!this.featureDirectoryPath.exists) {
+  private static async getFeatureCount(featureDirectoryTree: GitTree) {
+    const exists = await featureDirectoryTree.exists;
+    if (!exists) {
       return 0;
     }
 
-    const featureFiles = this.featureDirectoryPath
-      .readDirectorySync({ recursive: true })
-      .filter((file) => file.isFile);
-    return featureFiles.length;
-  }
-
-  /**
-   * Walks the feature directory tree and yields every file node
-   * that is in a terminal branch.
-   */
-  async *terminalBranchNodes(): AsyncGenerator<Path, void, void> {
-    if (!this.featureDirectoryPath.exists) {
-      return; // a missing folder indicates no features
-    }
-
-    const levels = this.pathStructure.levels;
-    async function* walk(currentPath: Path, depth = 0): AsyncGenerator<Path, void, void> {
-      if (!currentPath.exists) {
-        return;
-      }
-
-      // TODO: once @zenfs/core supports fs.opendir with options (for recursion), use that instead of readDirectory so the generator truly only loads one file at a time
-      const directoryGenerator = currentPath.openDirectory();
-      const firstNode = await directoryGenerator.next();
-
-      if (!firstNode.value) {
-        // there are no items in this directory
-        return;
-      }
-
-      // All nodes in the directory should be the same type, so we should
-      // yield files if the first node is a file.
-      const isTerminalDepth = depth === levels;
-      if (firstNode.value.isFile && isTerminalDepth) {
-        yield firstNode.value;
-        for await (const node of directoryGenerator) {
-          if (node.isFile) {
-            yield node;
-          }
-        }
-        return;
-      }
-
-      // Then, we need to recurse into this directory's subdirectories
-      // to yield terminal branch nodes.
-      if (firstNode.value.isDirectory && !isTerminalDepth) {
-        yield* walk(firstNode.value, depth + 1);
-        for await (const node of directoryGenerator) {
-          if (node.isDirectory) {
-            yield* walk(node, depth + 1);
-          }
-        }
-      }
-    }
-
-    yield* walk(this.featureDirectoryPath);
+    return (await Array.fromAsync(featureDirectoryTree.walkDirectory(undefined, true))).length;
   }
 
   /**
@@ -252,9 +236,11 @@ export class TableDatasetV3 {
    * This method will walk through the feature folder tree and yield
    * every raw feature found in a terminal branch.
    */
-  async *rawFeatures(): AsyncGenerator<RawFeature, void, void> {
-    for await (const fileNode of this.terminalBranchNodes()) {
-      yield RawFeature.fromFile(fileNode);
+  async *rawFeatures(concurrentLimit?: number): AsyncGenerator<RawFeature, void, void> {
+    for await (const [path, content] of this.featureDirectoryTree.walkDirectory(concurrentLimit)) {
+      if (content) {
+        yield RawFeature.fromBuffer(path.name, content);
+      }
     }
   }
 
@@ -264,15 +250,12 @@ export class TableDatasetV3 {
    * For large datasets, consider using the `rawFeatures()`
    * generator method instead to avoid high memory usage.
    */
-  toRawFeatures() {
+  async toRawFeatures() {
     const rawFeatures = new RawFeatures();
 
-    this.featureDirectoryPath
-      .readDirectorySync({ recursive: true })
-      .filter((file) => file.isFile)
-      .forEach((file) => {
-        rawFeatures.add(RawFeature.fromFile(file));
-      });
+    for await (const rawFeature of this.rawFeatures()) {
+      rawFeatures.add(rawFeature);
+    }
 
     return rawFeatures;
   }
@@ -296,10 +279,10 @@ export class TableDatasetV3 {
    * generator method instead to avoid high memory usage.
    * This method is a wrapper around that generator.
    */
-  toFeatures() {
+  async toFeatures() {
     const features = new Features();
 
-    for (const feature of this.toRawFeatures()) {
+    for (const feature of await this.toRawFeatures()) {
       features.add(feature.toFeature(this.schema, this.legends, this.pathStructure, this.crss));
     }
 
@@ -314,9 +297,9 @@ export class TableDatasetV3 {
    *
    * An existing feature's encoded ID can be retreived with `Feature.eid`.
    */
-  has(eid: string) {
-    const featurePath = this.featureDirectoryPath.join(eid);
-    return featurePath.exists && featurePath.isFile;
+  async has(eid: string) {
+    const featurePath = this.featureDirectoryTree.join(eid);
+    return featurePath.isFile;
   }
 
   /**
@@ -327,13 +310,14 @@ export class TableDatasetV3 {
    *
    * An existing feature's encoded ID can be retreived with `Feature.eid`.
    */
-  get(eid: string) {
-    if (!this.has(eid)) {
+  async get(eid: string) {
+    if (!(await this.has(eid))) {
       return undefined;
     }
 
-    const featurePath = this.featureDirectoryPath.join(eid);
-    const rawFeature = RawFeature.fromFile(featurePath);
+    const featurePath = this.featureDirectoryTree.join(eid);
+    const blob = await featurePath.readFile();
+    const rawFeature = RawFeature.fromBuffer(featurePath.basename, blob);
     return rawFeature.toFeature(this.schema, this.legends, this.pathStructure, this.crss);
   }
 
@@ -343,25 +327,35 @@ export class TableDatasetV3 {
    * This a convenience method that calls `get` for each encoded ID
    * and returns the found features as a `Features` collection.
    */
-  select(eids: string[]) {
+  async select(eids: string[]) {
     const features = new Features();
+    const pendingPromises: Promise<void>[] = [];
 
     for (const eid of eids) {
-      const feature = this.get(eid);
-      if (feature) {
-        features.add(feature);
-      }
+      const promise = this.get(eid).then((feature) => {
+        if (feature) {
+          features.add(feature);
+        }
+      });
+      pendingPromises.push(promise);
     }
 
+    await Promise.all(pendingPromises);
     return features;
   }
 
+  /**
+   * The location of the generated spatial index for this dataset, if it exists.
+   */
   private get spatialIndexPath() {
-    return this.metaPath.join('spatial_index.fb');
+    return this.generatedPath.join('spatial_index.fb');
   }
 
+  /**
+   * The location of a reference mapping file that maps spatial index entries to  encoded feature IDs.
+   */
   private get spatialIndexRefPath() {
-    return this.metaPath.join('spatial_index.fb.ref');
+    return this.generatedPath.join('spatial_index.fb.ref');
   }
 
   /**
@@ -440,7 +434,7 @@ export class TableDatasetV3 {
    * GeoJSON representation of large datasets.
    */
   async toGeoJSON() {
-    this.cache.geoJSON ??= this.toFeatures().toGeoJSON({ serializable: true });
+    this.cache.geoJSON ??= (await this.toFeatures()).toGeoJSON({ serializable: true });
     return this.cache.geoJSON;
   }
 }

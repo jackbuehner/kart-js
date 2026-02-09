@@ -17,7 +17,8 @@ export class Diff {
     const diffObject: KartDiff.HexWkB.v1.Diff = {};
 
     for await (const [name, value] of this.core.data) {
-      const datasetDiff = value.dataset.working.diff?.['kart.diff/v1+hexwkb'];
+      const diff = await value.dataset.working.computeDiff();
+      const datasetDiff = diff?.['kart.diff/v1+hexwkb'];
       if (datasetDiff) {
         diffObject[name] = datasetDiff[name];
       }
@@ -25,7 +26,7 @@ export class Diff {
 
     return {
       'kart.patch/v1': {
-        base: await this.core.getCurrentCommit(),
+        base: this.core.repoTree.ref,
         crs: 'EPSG:4326',
       },
       'kart.diff/v1+hexwkb': diffObject,

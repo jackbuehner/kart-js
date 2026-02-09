@@ -5,6 +5,10 @@
     "sourceMap": true,
     "inlineSources": false,
     "target": "esnext",
+    "lib": [
+      "esnext",
+      "esnext.disposable"
+    ],
     "module": "nodenext",
     "rewriteRelativeImportExtensions": true,
     "allowImportingTsExtensions": true,
@@ -16,7 +20,7 @@
     "rootDir": "lib",
     "emitDeclarationOnly": true,
     "isolatedModules": true,
-    "noUncheckedIndexedAccess": true
+    "noUncheckedIndexedAccess": true,
   },
   "include": [
     "lib/**/*"

@@ -14,23 +14,23 @@ export class Data {
   /**
    * Whether there is a valid table dataset v3 with the given name.
    */
-  has(name: string) {
-    return TableDatasetV3.isValidDataset(this.core.repoDir, name);
+  async has(name: string) {
+    return this.datatsets.has(name) || (await TableDatasetV3.isValidDataset(this.core.repoTree, name));
   }
 
   /**
    * Gets the dataset with the given name if it exists and is a valid table dataset v3.
    */
-  get(name: string) {
-    if (!this.has(name)) {
-      throw new Error(`Dataset with name "${name}" does not exist or is not a valid table dataset v3.`);
-    }
-
+  async get(name: string) {
     if (this.datatsets.has(name)) {
       return this.datatsets.get(name)!;
     }
 
-    const newDataset = new TableDatasetV3(this.core.repoDir, name);
+    if (!(await this.has(name))) {
+      return null;
+    }
+
+    const newDataset = await TableDatasetV3.create(this.core, name);
     this.datatsets.set(name, newDataset);
     return newDataset;
   }
@@ -39,13 +39,13 @@ export class Data {
    * Deletes the dataset with the given name from the repository.
    */
   async delete(name: string) {
-    if (!this.has(name)) {
-      throw new Error(`Dataset with name "${name}" does not exist or is not a valid table dataset v3.`);
+    if (!(await this.has(name))) {
+      return false;
     }
 
-    const dataset = this.get(name);
-    await dataset.path.rm({ recursive: true, force: true });
-    this.datatsets.delete(name);
+    const dataset = (await this.get(name))!;
+    await dataset.tree.rm();
+    return this.datatsets.delete(name);
   }
 
   /**
@@ -60,12 +60,29 @@ export class Data {
     });
 
     for (const folder of folders) {
-      if (this.has(folder)) {
+      if (await this.has(folder)) {
         yield [
           folder,
           {
             type: 'table-dataset-v3',
-            dataset: this.get(folder),
+            dataset: await this.get(folder),
+          },
+        ] as DatasetEntry;
+      }
+    }
+  }
+
+  private *loadedEntries() {
+    const path = new Path(this.core.repoDir.absolute);
+    const folders = path.readDirectorySync().filter((entry) => entry.isDirectory);
+
+    for (const folder of folders) {
+      if (this.datatsets.has(folder.name)) {
+        yield [
+          folder.name,
+          {
+            type: 'table-dataset-v3',
+            dataset: this.datatsets.get(folder.name)!,
           },
         ] as DatasetEntry;
       }
@@ -74,6 +91,15 @@ export class Data {
 
   [Symbol.asyncIterator]() {
     return this.entries();
+  }
+
+  /**
+   * Removes all event listeners from the loaded datasets.
+   */
+  removeAllEventListeners() {
+    for (const [name, value] of this.loadedEntries()) {
+      value.dataset.working.off();
+    }
   }
 
   async toObject() {

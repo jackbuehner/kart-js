@@ -18,7 +18,6 @@ const fs = (() => {
   async function enableCaseSensitivity(path: string | Buffer | URL) {
     if (process.platform !== 'win32') return;
     try {
-      console.log(`Enabling case sensitivity for path: ${path.toString()}`);
       return new Promise<void>((resolve, reject) => {
         exec(`fsutil.exe file setCaseSensitiveInfo "${path.toString()}" enable`, (error, stdout, stderr) => {
           if (error) {

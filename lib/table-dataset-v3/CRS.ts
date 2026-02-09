@@ -23,7 +23,11 @@ export class CRS {
       );
     }
 
-    const fileContents = filePath.readFileSync({ encoding: 'utf-8' });
+    return this.fromWktBuffer(filePath.basename, filePath.readFileSync());
+  }
+
+  static fromWktBuffer(identifier: string, buffer: Uint8Array) {
+    const fileContents = new TextDecoder().decode(buffer);
 
     try {
       parseWkt(fileContents); // throws an error if the WKT is invalid
@@ -33,7 +37,7 @@ export class CRS {
       );
     }
 
-    return new CRS(filePath.basename, fileContents);
+    return new CRS(identifier, fileContents);
   }
 }
 

@@ -235,6 +235,31 @@ export class Schema {
   }
 
   /**
+   * Creates a Schema instance from a buffer containing schema data.
+   *
+   * @throws {InvalidFileContentsError} If the buffer is empty or cannot be parsed as JSON.
+   * @throws {z.ZodError} If the decoded contents do not match the expected array structure.
+   *
+   * @param buffer - The buffer containing schema data.
+   */
+  static fromBuffer(buffer: Uint8Array) {
+    if (buffer.length === 0) {
+      throw new InvalidFileContentsError('Schema buffer is empty');
+    }
+
+    const schemaRaw = new TextDecoder('utf-8').decode(buffer);
+    let schemaJson: unknown;
+    try {
+      schemaJson = JSON.parse(schemaRaw);
+    } catch (error) {
+      throw new InvalidFileContentsError(`Schema buffer contains invalid JSON: ${(error as Error).message}`);
+    }
+
+    const schemaEntries = z.array(schemaEntrySchema).parse(schemaJson);
+    return new Schema(schemaEntries);
+  }
+
+  /**
    * Creates a Schema instance from a schema file at the given path.
    *
    * @throws {FileNotFoundError} If the file does not exist at the specified path.
@@ -254,17 +279,8 @@ export class Schema {
       throw new InvalidFileContentsError(`Schema file at path ${filePath} is empty`);
     }
 
-    let schemaJson: unknown;
-    try {
-      schemaJson = JSON.parse(schemaRaw);
-    } catch (error) {
-      throw new InvalidFileContentsError(
-        `Schema file at path ${filePath} contains invalid JSON: ${(error as Error).message}`
-      );
-    }
-
-    const schemaEntries = z.array(schemaEntrySchema).parse(schemaJson);
-    return new Schema(schemaEntries);
+    const buffer = new TextEncoder().encode(schemaRaw);
+    return this.fromBuffer(buffer);
   }
 
   map(fn: (entry: SchemaEntry) => SchemaEntry) {

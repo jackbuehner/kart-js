@@ -246,12 +246,33 @@ export class PathStructure {
     }
 
     const fileContents = path.readFileSync({ encoding: 'utf-8' });
+    const buffer = Buffer.from(fileContents, 'utf-8');
+    try {
+      return PathStructure.fromBuffer(buffer, 'utf-8');
+    } catch (error) {
+      if (error instanceof InvalidFileContentsError) {
+        error.message = `Invalid path structure file at path ${path}: ${error.message}`;
+      }
+    }
+  }
+
+  /**
+   * Creates a PathStructure instance from a buffer containing the JSON data included in a `path-structure.json` file.
+   *
+   * @throws {InvalidFileContentsError} If the buffer contents cannot be parsed as valid JSON.
+   * @throws {z.ZodError} If the decoded contents do not match the expected path structure schema.
+   *
+   * @param buffer - The buffer containing path structure JSON data.
+   * @param encoding - The character encoding of the buffer (default: 'utf-8').
+   */
+  static fromBuffer(buffer: Uint8Array, encoding: BufferEncoding = 'utf-8') {
+    const fileContents = new TextDecoder(encoding).decode(buffer);
     let fileJson: unknown;
     try {
       fileJson = JSON.parse(fileContents);
     } catch (error) {
       const exposedError = new InvalidFileContentsError(
-        `Failed to parse path structure file at path: ${path}. Invalid JSON format.`
+        'Failed to parse path structure from buffer. Invalid JSON format.'
       );
       exposedError.cause = error;
       throw exposedError;

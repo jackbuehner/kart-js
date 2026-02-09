@@ -17,7 +17,7 @@ import { Kart as _Kart } from './Kart.ts';
  */
 async function init(storeName: string) {
   // required by isomorphic-git
-  window.Buffer = await import('buffer').then(({ Buffer }) => Buffer);
+  globalThis.Buffer = await import('buffer').then(({ Buffer }) => Buffer);
 
   // use indexdDB with ZenFS
   const fs = await resolveMountConfig({ backend: IndexedDB, storeName });

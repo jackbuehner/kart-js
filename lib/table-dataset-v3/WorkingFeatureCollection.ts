@@ -179,15 +179,15 @@ export class WorkingFeatureCollection extends Emitter<{
     return this.trackedChanges.size > 0;
   }
 
-  has(featureId: string): boolean {
-    return this.get(featureId) !== undefined;
+  async has(featureId: string) {
+    return this.get(featureId) !== undefined || this.trackedChanges.has(featureId);
   }
 
   /**
    * Gets a feature by its ID.
    */
-  get(featureId: string): KartFeature | undefined {
-    const originalFeature = this.dataset.get(featureId)?.toGeoJSON() ?? undefined;
+  async get(featureId: string): Promise<KartFeature | undefined> {
+    const originalFeature = (await this.dataset.get(featureId))?.toGeoJSON() ?? undefined;
 
     if (this.trackedChanges.has(featureId)) {
       const change = this.trackedChanges.get(featureId)!;
@@ -256,12 +256,12 @@ export class WorkingFeatureCollection extends Emitter<{
    * @param properties - The properties to set on the feature.
    * @param merge - Whether to merge the updated properties with the existing tracked update (default: true).
    */
-  updateProperties(featureId: string, properties: Record<string, unknown>, merge = true) {
-    if (!this.has(featureId)) {
+  async updateProperties(featureId: string, properties: Record<string, unknown>, merge = true) {
+    if (!(await this.has(featureId))) {
       throw new Error(`Feature with ID "${featureId}" not found.`);
     }
 
-    const currentFeature = this.get(featureId)!;
+    const currentFeature = (await this.get(featureId))!;
 
     let newProperties: Record<string, unknown> = {};
     if (merge) {
@@ -281,7 +281,7 @@ export class WorkingFeatureCollection extends Emitter<{
     }
 
     // delete values that are the same as the original feature to avoid unnecessary updates
-    const originalFeature = this.dataset.get(featureId)?.toGeoJSON();
+    const originalFeature = (await this.dataset.get(featureId))?.toGeoJSON();
     if (!originalFeature) {
       throw new Error(
         `Inconsistent state: attempted to update properties for feature with ID "${featureId}" but could not find the original feature in the dataset.`
@@ -299,7 +299,7 @@ export class WorkingFeatureCollection extends Emitter<{
       {
         ...currentFeature,
         properties: {
-          ...originalFeature.properties,
+          ...originalFeature?.properties,
           ...newProperties,
         },
       },
@@ -335,8 +335,8 @@ export class WorkingFeatureCollection extends Emitter<{
    * @param featureId - The ID of the feature to update.
    * @param geometry - The new geometry for the feature.
    */
-  updateGeometry(featureId: string, geometry: GeoJSON.Geometry) {
-    if (!this.has(featureId)) {
+  async updateGeometry(featureId: string, geometry: GeoJSON.Geometry) {
+    if (!(await this.has(featureId))) {
       throw new Error(`Feature with ID "${featureId}" not found.`);
     }
 
@@ -359,12 +359,13 @@ export class WorkingFeatureCollection extends Emitter<{
    *
    * @param feature - The feature to add.
    */
-  add(feature: KartFeature) {
+  async add(feature: KartFeature) {
     if (feature.id === undefined || feature.id === null) {
       throw new Error('Feature must have an ID to be added.');
     }
 
-    if (this.get(feature.id) !== undefined) {
+    const existingFeature = await this.get(feature.id);
+    if (existingFeature) {
       throw new Error(`Feature with ID "${feature.id}" already exists.`);
     }
 
@@ -394,8 +395,8 @@ export class WorkingFeatureCollection extends Emitter<{
   /**
    * Removes a feature from the collection by its ID.
    */
-  delete(featureId: string) {
-    if (!this.has(featureId)) {
+  async delete(featureId: string) {
+    if (!(await this.has(featureId))) {
       throw new Error(`Feature with ID "${featureId}" not found.`);
     }
 
@@ -413,7 +414,7 @@ export class WorkingFeatureCollection extends Emitter<{
   /**
    * Gets a diff of the changes made to the feature collection since creation.
    */
-  get diff() {
+  async computeDiff() {
     if (this.trackedChanges.size === 0) {
       return {
         'kart.diff/v1+hexwkb': makeSerializable<KartDiff.HexWkB.v1.Diff>({
@@ -424,8 +425,8 @@ export class WorkingFeatureCollection extends Emitter<{
 
     const diff: KartDiff.HexWkB.v1.Diff = {
       [this.datasetId]: {
-        feature: this.trackedChanges
-          .map((change, eid) => {
+        feature: await Promise.all(
+          this.trackedChanges.map(async (change, eid) => {
             if (change.type === 'insert') {
               const data: Record<string, unknown> = {};
 
@@ -448,7 +449,7 @@ export class WorkingFeatureCollection extends Emitter<{
             }
 
             if (change.type === 'delete') {
-              const originalFeature = this.dataset.get(eid);
+              const originalFeature = await this.dataset.get(eid);
               if (!originalFeature) {
                 throw new Error(`Original feature with ID "${eid}" not found for update diff generation.`);
               }
@@ -464,7 +465,7 @@ export class WorkingFeatureCollection extends Emitter<{
             }
 
             if (change.type === 'update') {
-              const originalFeature = this.dataset.get(eid);
+              const originalFeature = await this.dataset.get(eid);
               if (!originalFeature) {
                 throw new Error(`Original feature with ID "${eid}" not found for update diff generation.`);
               }
@@ -513,7 +514,7 @@ export class WorkingFeatureCollection extends Emitter<{
               } satisfies KartDiff.HexWkB.v1.Update;
             }
           })
-          .filter((x) => !!x),
+        ).then((results) => results.filter((x) => !!x)),
       },
     };
 

@@ -143,7 +143,29 @@ export class RawFeature {
   }
 
   /**
-   * Creates a feature file at the given path.
+   * Creates a RawFeature instance from a feature file name and its contents buffer.
+   *
+   * @throws {msgpack.DecodeError} If the feature file name or contents cannot be decoded with MessagePack.
+   * @throws {z.ZodError} If the decoded contents are not the correct shape.
+   *
+   * @param name basename of the feature file.
+   * @param buffer The contents of the feature file as a Uint8Array.
+   */
+  static fromBuffer(name: string, buffer: Uint8Array) {
+    const msgpackEncodedName = Uint8Array.fromBase64(name, { alphabet: 'base64url' });
+    const primaryKeyDataDecoded = serializer.decode(msgpackEncodedName, { extensionCodec, useBigInt64: true });
+    const primaryKeyData = z.unknown().array().parse(primaryKeyDataDecoded);
+
+    const propertiesDecoded = serializer
+      .decodeMulti(buffer, { extensionCodec, useBigInt64: true })
+      .next().value; // decodeMulti allows us to ignore extra trailing bytes
+    const [legendId, properties] = rawFeatureFileDataSchema.parse(propertiesDecoded);
+
+    return new RawFeature(legendId, primaryKeyData, properties);
+  }
+
+  /**
+   * Creates a RawFeature instance from a file at the given path.
    *
    * @throws {FileNotFoundError} If the file does not exist at the specified path.
    * @throws {import('../utils/errors.ts').FileReadError} If the file cannot be read.
@@ -157,17 +179,7 @@ export class RawFeature {
       throw new FileNotFoundError(`File does not exist at path: ${filePath}`);
     }
 
-    const msgpackEncodedName = Uint8Array.fromBase64(filePath.name, { alphabet: 'base64url' });
-    const primaryKeyDataDecoded = serializer.decode(msgpackEncodedName, { extensionCodec, useBigInt64: true });
-    const primaryKeyData = z.unknown().array().parse(primaryKeyDataDecoded);
-
-    const fileContents = filePath.readFileSync();
-    const propertiesDecoded = serializer
-      .decodeMulti(fileContents, { extensionCodec, useBigInt64: true })
-      .next().value; // decodeMulti allows us to ignore extra trailing bytes
-    const [legendId, properties] = rawFeatureFileDataSchema.parse(propertiesDecoded);
-
-    return new RawFeature(legendId, primaryKeyData, properties);
+    return this.fromBuffer(filePath.name, filePath.readFileSync());
   }
 }
 

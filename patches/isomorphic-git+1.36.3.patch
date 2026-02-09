@@ -1,0 +1,14 @@
+diff --git a/node_modules/isomorphic-git/index.cjs b/node_modules/isomorphic-git/index.cjs
+index 1427f0d..98fde52 100644
+--- a/node_modules/isomorphic-git/index.cjs
++++ b/node_modules/isomorphic-git/index.cjs
+@@ -17179,3 +17179,9 @@ exports.writeObject = writeObject;
+ exports.writeRef = writeRef;
+ exports.writeTag = writeTag;
+ exports.writeTree = writeTree;
++exports.GitIndex = GitIndex;
++exports.__internal_flatFileListToDirectoryStructure = flatFileListToDirectoryStructure;
++exports.__internal_normalizeStats = normalizeStats;
++exports.__internal_mode2type = mode2type;
++exports.__internal_GitWalkSymbol = GitWalkSymbol;
++exports.__internal_compareStrings = compareStrings;
