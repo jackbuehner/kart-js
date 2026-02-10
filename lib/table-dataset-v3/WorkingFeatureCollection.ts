@@ -1,4 +1,5 @@
-import type { GeometryWithCrs, KartEnabledFeature, KartFeatureCollection } from '../utils/features/index.ts';
+import { type Doc as YDoc } from 'yjs';
+import type { KartEnabledFeature, KartFeatureCollection } from '../utils/features/index.ts';
 import { isKartEnabledFeature } from '../utils/features/index.ts';
 import { deepFreeze, Emitter } from '../utils/index.ts';
 import type { CRSs } from './CRS.ts';
@@ -8,6 +9,7 @@ import type { PathStructure } from './PathStructure.ts';
 import type { Schema } from './Schema.ts';
 import { makeSerializable, parse, stringify } from './serializer.ts';
 import type { TableDatasetV3 } from './TableDatasetV3.ts';
+import { TrackedChanges } from './TrackedChanges.ts';
 
 type KartFeature = KartFeatureCollection['features'][number];
 
@@ -52,12 +54,12 @@ export class WorkingFeatureCollection extends Emitter<{
 
   private trackedChanges: TrackedChanges;
 
-  constructor(dataset: TableDatasetV3) {
+  constructor(dataset: TableDatasetV3, ydoc: YDoc) {
     super();
 
     this.dataset = dataset;
     this.datasetId = dataset.id;
-    this.trackedChanges = new TrackedChanges(this.dataset.schema.primaryKeyNames);
+    this.trackedChanges = new TrackedChanges(this.dataset.schema.primaryKeyNames, ydoc, this.datasetId);
 
     // ensure that all features have the same geometry type
     // const geometryTypes = new Set(
@@ -525,183 +527,6 @@ export class WorkingFeatureCollection extends Emitter<{
       },
       'kart.diff/v1+hexwkb': makeSerializable(diff),
     };
-  }
-}
-
-type TrackedDelete = { type: 'delete' };
-type TrackedInsert = { type: 'insert'; feature: KartFeature };
-type TrackedPropertiesUpdate = { type: 'update'; properties: Partial<KartFeature['properties']> };
-type TrackedGeometryUpdate = { type: 'update'; geometry: KartFeature['geometry'] };
-type TrackedGeometryAndPropertiesUpdate = {
-  type: 'update';
-  properties: Partial<KartFeature['properties']>;
-  geometry: KartFeature['geometry'];
-};
-export type TrackedChange =
-  | TrackedDelete
-  | TrackedInsert
-  | TrackedPropertiesUpdate
-  | TrackedGeometryUpdate
-  | TrackedGeometryAndPropertiesUpdate;
-
-class TrackedChanges implements Omit<
-  Map<string, TrackedChange>,
-  'set' | 'delete' | 'forEach' | 'entries' | 'values'
-> {
-  trackedChanges: Map<string, TrackedChange> = new Map();
-  primaryKeyNames: string[];
-
-  constructor(primaryKeyNames: string[]) {
-    this.primaryKeyNames = primaryKeyNames;
-  }
-
-  clear() {
-    this.trackedChanges.clear();
-  }
-
-  /**
-   * Removes a tracked change.
-   *
-   * To track a deletion, use `setDelete` instead.
-   */
-  private delete(key: string) {
-    return this.trackedChanges.delete(key);
-  }
-
-  has(key: string) {
-    return this.trackedChanges.has(key);
-  }
-
-  get(key: string) {
-    return this.trackedChanges.get(key);
-  }
-
-  get size() {
-    return this.trackedChanges.size;
-  }
-
-  keys() {
-    return this.trackedChanges.keys();
-  }
-
-  [Symbol.iterator]() {
-    return this.trackedChanges[Symbol.iterator]();
-  }
-
-  get [Symbol.toStringTag]() {
-    return 'TrackedChanges';
-  }
-
-  /**
-   * Track a deletion of a feature.
-   */
-  setDelete(key: string): this {
-    if (!this.has(key)) {
-      this.trackedChanges.set(key, { type: 'delete' });
-      return this;
-    }
-
-    const current = this.get(key);
-    if (current?.type === 'delete') {
-      return this;
-    }
-
-    if (current?.type === 'insert') {
-      // deleting a feature that already has an insert tracked
-      // idicates that we can just remove the tracked change
-      this.delete(key);
-      return this;
-    }
-
-    this.trackedChanges.set(key, { type: 'delete' });
-    return this;
-  }
-
-  /**
-   * Track the insertion of a new feature.
-   *
-   * IMPORTANT: Make sure that the feature ID (key) (eid) matches the primary keys included in the feature properties.
-   */
-  setInsert(key: string, value: Omit<TrackedInsert, 'type'>): this {
-    this.trackedChanges.set(key, { type: 'insert', ...value });
-    return this;
-  }
-
-  /**
-   * Register an update to the geometry of a feature.
-   */
-  setGeometry(key: string, value: Omit<TrackedGeometryUpdate, 'type'>): this {
-    if (!this.has(key)) {
-      this.trackedChanges.set(key, { type: 'update', ...value });
-      return this;
-    }
-
-    const current = this.get(key)!;
-
-    // merge with existing update
-    if (current.type === 'update' && 'properties' in current) {
-      this.trackedChanges.set(key, {
-        type: 'update',
-        properties: current.properties,
-        geometry: value.geometry,
-      });
-      return this;
-    }
-
-    this.trackedChanges.set(key, { type: 'update', ...value });
-    return this;
-  }
-
-  /**
-   * Register an update to the properties of a feature.
-   *
-   * The properties MUST be all properties that are changed from
-   * the original feature, not since the last update.
-   *
-   * DO NOT pass the full set of properties.
-   *
-   * DO NOT update primary keys using this method. To update primary keys,
-   * delete the feature, calculate the new feature ID based on the new primary keys,
-   * and then insert the new feature.
-   */
-  setProperties(key: string, value: Omit<TrackedPropertiesUpdate, 'type'>): this {
-    // if primary keys are being changed, the consumer needs to delete and insert instead
-    value.properties ??= {};
-    for (const primaryKey of this.primaryKeyNames) {
-      if (primaryKey in value.properties) {
-        throw new Error(
-          `Cannot update primary key "${primaryKey}" using setProperties. To change primary keys, delete the feature and insert a new one instead.`
-        );
-      }
-    }
-
-    if (!this.has(key)) {
-      this.trackedChanges.set(key, { type: 'update', ...value });
-      return this;
-    }
-
-    const current = this.get(key)!;
-
-    // merge with existing update geometry
-    if (current.type === 'update' && 'geometry' in current) {
-      this.trackedChanges.set(key, {
-        type: 'update',
-        properties: value.properties,
-        geometry: current.geometry,
-      });
-      return this;
-    }
-
-    this.trackedChanges.set(key, { type: 'update', ...value });
-    return this;
-  }
-
-  map<U>(callback: (value: TrackedChange, key: string, map: Map<string, TrackedChange>) => U): U[] {
-    const results: U[] = [];
-    for (const [key, value] of this.trackedChanges) {
-      results.push(callback(value, key, this.trackedChanges));
-    }
-    return results;
   }
 }
 

@@ -1,4 +1,5 @@
 import Flatbush from 'flatbush';
+import { type Doc as YDoc } from 'yjs';
 import type { Kart } from '../Kart.ts';
 import { GitTree } from '../utils/Path.ts';
 import type { KartFeatureCollection } from '../utils/features/index.ts';
@@ -48,7 +49,8 @@ export class TableDatasetV3 {
     description: string | undefined,
     legends: Legends,
     crss: CRSs,
-    featureCount: number
+    featureCount: number,
+    ydoc: YDoc
   ) {
     this.tree = tree;
     this.id = id;
@@ -60,7 +62,7 @@ export class TableDatasetV3 {
     this.legends = legends;
     this.crss = crss;
     this.featureCount = featureCount;
-    this.working = new WorkingFeatureCollection(this);
+    this.working = new WorkingFeatureCollection(this, ydoc);
   }
 
   static async create(core: Kart, id: string): Promise<TableDatasetV3> {
@@ -91,7 +93,8 @@ export class TableDatasetV3 {
         validatedContents.description,
         validatedContents.legends,
         validatedContents.crss,
-        featureCount
+        featureCount,
+        core.ydoc
       );
     } catch (error) {
       const toThrow = new Error(`Dataset with id "${id}" has invalid contents: ${(error as Error).message}`);

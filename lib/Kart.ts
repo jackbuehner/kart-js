@@ -14,9 +14,10 @@ import {
   walk,
 } from 'isomorphic-git';
 import pLimit from 'p-limit';
+import { applyUpdate, encodeStateAsUpdate, Doc as YDoc } from 'yjs';
 import { Data } from './commands/data/Data.ts';
 import { Diff } from './commands/diff/Diff.ts';
-import { Path } from './utils/index.ts';
+import { debounce, Path } from './utils/index.ts';
 import { GitTree } from './utils/Path.ts';
 
 interface KartCloneOptions {
@@ -29,12 +30,16 @@ export class Kart {
   readonly repoDir: Path;
   readonly repoTree: GitTree;
   readonly throttledFs: typeof fs;
-  readonly uuid: `${string}-${string}-${string}-${string}-${string}`;
+
+  readonly roomName: string;
+  readonly ydoc: YDoc;
 
   readonly data: Data;
   readonly diff: Diff;
 
-  protected constructor(dir: Path, refObjectId: string, instanceUuid = crypto.randomUUID()) {
+  protected constructor(dir: Path, refObjectId: string, roomName: string) {
+    // TODO: add a locking mechnanism to prevent multiple Kart instances from using the same repoDir simultaneously
+    // TODO: add a locking mechanism to prevent multiple Kart instances from using the same room simultaneously
     this.repoDir = dir;
     if (!this.repoDir) {
       throw new Error('Invalid repository directory');
@@ -44,12 +49,77 @@ export class Kart {
     if (!gitdir.exists) {
       throw new Error(`Git directory not found at ${gitdir.absolute}`);
     }
-    this.uuid = instanceUuid;
-    this.repoTree = new GitTree(gitdir, gitdir, instanceUuid, refObjectId);
+    this.roomName = roomName;
+    this.repoTree = new GitTree(gitdir, gitdir, roomName, refObjectId);
+
+    this.ydoc = Kart.loadYDoc(gitdir, roomName, refObjectId);
 
     this.throttledFs = Kart.throttledFs;
     this.data = new Data(this);
     this.diff = new Diff(this);
+  }
+
+  /**
+   * Loads or creates a Y.Doc for the given room in the specified git directory.
+   */
+  private static loadYDoc(gitdir: Path, roomName: string, refObjectId: string) {
+    const ydoc = new YDoc();
+
+    const roomPath = gitdir.join('rooms', roomName);
+    const ydocPath = roomPath.join(`${roomName}.ydoc`);
+    const refObjectIdPath = roomPath.join('ref');
+    roomPath.makeDirectory({ recursive: true });
+
+    // if a ydoc already exists, the record of it's starting ref must also exist
+    // and match the refObjectId parameter to ensure that the correct ydoc is loaded
+    // for the current state of the repository.
+    if (ydocPath.exists) {
+      if (!refObjectIdPath.exists) {
+        throw new Error(
+          `Y.Doc found at ${ydocPath.absolute} but missing ref record at ${refObjectIdPath.absolute}.`
+        );
+      }
+
+      const storedRefObjectId = refObjectIdPath.readFileSync({ encoding: 'utf-8' });
+      if (storedRefObjectId.trim() !== refObjectId.trim()) {
+        throw new Error(
+          `Y.Doc found at ${ydocPath.absolute} but ref record at ${refObjectIdPath.absolute} does not match the expected refObjectId.\nExpected: ${refObjectId}\nFound: ${storedRefObjectId}`
+        );
+      }
+    }
+
+    // restore persisted ydoc state if it exists
+    if (ydocPath.exists) {
+      try {
+        const storedYDocData = ydocPath.readFileSync();
+        applyUpdate(ydoc, new Uint8Array(storedYDocData));
+      } catch (error) {
+        const err = new Error(
+          `Failed to load persisted Y.Doc state from ${ydocPath.absolute}.\nDid you previously stop the process while it was writing the file? Trying inspecting the file with https://inspector.yjs.dev.`,
+          { cause: error }
+        );
+        err.name = 'YDocLoadError';
+        throw err;
+      }
+    }
+
+    // When we create a new YDoc, we need to record its associated refObjectId.
+    // All changes stored in the YDoc are based on the state of the repository at that ref.
+    else {
+      refObjectIdPath.writeFileSync(refObjectId + '\n', { encoding: 'utf-8' });
+    }
+
+    // store the ydoc state on disk whenever it is updated
+    const save = async () => {
+      const encodedState = encodeStateAsUpdate(ydoc);
+      await ydocPath.writeFile(encodedState);
+    };
+    const debouncedSave = debounce(save, 1000);
+    ydoc.on('update', (update: Uint8Array, origin: any) => {
+      debouncedSave();
+    });
+
+    return ydoc;
   }
 
   /**
@@ -67,12 +137,14 @@ export class Kart {
    * on fetch, ensuring that local branches are always updated to match the remote branches.
    *
    * @param url - The remote repository URL to pull from.
+   * @param roomName - The name of the kartjs room to use.
    * @param dir - The local directory to pull into. If not provided, it will be inferred from the URL.
    * @param options - Additional options for cloning and fetching.
    * @returns A new instance of `Kart` attached to the pulled repository.
    */
   static async pull(
     url: string | URL,
+    roomName: string,
     dir?: string,
     { corsProxy, onProgress, ref = 'refs/remotes/origin/HEAD' }: KartCloneOptions = {}
   ) {
@@ -90,12 +162,10 @@ export class Kart {
     // always use a subfolder called ".kartjs" for the git repository contents
     const gitdir = new Path(dir).join('.kartjs');
 
-    const uuid = crypto.randomUUID();
-
     await this.initAndFetchBareRepo(url, gitdir, { corsProxy, onProgress });
     const refObjectId = await resolveRef({ fs, gitdir: gitdir.absolute, ref });
-    await this.resetIndex(gitdir, uuid, refObjectId);
-    return new Kart(new Path(dir), refObjectId, uuid);
+    await this.resetIndex(gitdir, roomName, refObjectId);
+    return new Kart(new Path(dir), refObjectId, roomName);
   }
 
   /**
@@ -110,9 +180,16 @@ export class Kart {
    *
    * @param url - The expected remote repository URL. The repository at the given directory must have a remote named "origin" with this URL.
    * @param dir - The local directory to attach to. This directory must already exist and contain a valid kartjs repository.
+   * @param roomName - The name of the kartjs room to use. If the room already exists, this instance will share state with it (not recommended).
+   * @param ref - The git ref to read the initial state from. Defaults to 'refs/remotes/origin/HEAD'.
    * @returns A new instance of `Kart` attached to the existing repository.
    */
-  static async attach(url: string | URL, dir: string | Path, ref = 'refs/remotes/origin/HEAD') {
+  static async attach(
+    url: string | URL,
+    dir: string | Path,
+    roomName: string,
+    ref = 'refs/remotes/origin/HEAD'
+  ) {
     if (!(dir instanceof Path)) {
       dir = new Path(dir);
     }
@@ -136,7 +213,7 @@ export class Kart {
     }
 
     const refObjectId = await resolveRef({ fs, gitdir: gitdir.absolute, ref });
-    return new Kart(dir, refObjectId);
+    return new Kart(dir, refObjectId, roomName);
   }
 
   private static http = (async () => {
@@ -288,7 +365,7 @@ export class Kart {
    * @returns A promise that resolves when the index has been successfully discarded and replaced.
    */
   private static async resetIndex(gitDir: Path, indexName: string, refObjectId: string) {
-    const indexPath = gitDir.join(indexName);
+    const indexPath = gitDir.join('rooms', indexName, 'index');
     if (indexPath.exists) {
       await indexPath.rm({ recursive: true, force: true });
     }
@@ -327,12 +404,12 @@ export class Kart {
   async [Symbol.asyncDispose]() {
     this.data.removeAllEventListeners();
 
-    // Since a new index is created for each Kart instance to start working changes,
-    // we need to clean up the index when disposing the Kart instance.
-    const indexPath = this.repoDir.join('.kartjs', this.uuid);
-    if (indexPath.exists) {
-      await indexPath.rm({ force: true });
-    }
+    // // Since a new index is created for each Kart instance to start working changes,
+    // // we need to clean up the index when disposing the Kart instance.
+    // const indexPath = this.repoDir.join('.kartjs', this.uuid);
+    // if (indexPath.exists) {
+    //   await indexPath.rm({ force: true });
+    // }
   }
 
   dispose() {

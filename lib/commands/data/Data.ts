@@ -1,6 +1,7 @@
 import { readdir, stat } from '@zenfs/core/promises';
 import type { Kart } from '../../Kart.ts';
 import { TableDatasetV3 } from '../../table-dataset-v3/TableDatasetV3.ts';
+import { TrackedChanges } from '../../table-dataset-v3/TrackedChanges.ts';
 import { Path } from '../../utils/index.ts';
 
 export class Data {
@@ -43,8 +44,18 @@ export class Data {
       return false;
     }
 
+    // delete the dataset from the index for this room
     const dataset = (await this.get(name))!;
     await dataset.tree.rm();
+
+    // remove ydoc shared types for this dataset from the room's ydoc
+    const { globalMap, matches } = TrackedChanges.findSharedTypes(this.core.ydoc, name);
+    this.core.ydoc.transact(() => {
+      for (const match of matches) {
+        globalMap.delete(match.key);
+      }
+    });
+
     return this.datatsets.delete(name);
   }
 

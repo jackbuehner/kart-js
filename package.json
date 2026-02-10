@@ -47,6 +47,7 @@
     "proj4": "^2.20.2",
     "temporal-polyfill": "^0.3.0",
     "wkt-parser": "^1.5.2",
+    "yjs": "^13.6.29",
     "zod": "^4.3.6",
     "zod-geojson": "^1.6.2"
   },

@@ -1,4 +1,4 @@
-import fs, { existsSync, readdirSync, readFileSync, realpathSync, statSync } from '@zenfs/core';
+import fs, { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from '@zenfs/core';
 import * as path from '@zenfs/core/path';
 import { mkdir, opendir, readdir, rm, writeFile } from '@zenfs/core/promises';
 import {
@@ -269,6 +269,17 @@ export class Path extends VirtualPath<Path> {
     }
   }
 
+  /** @deprecated Use `writeFile` instead. */
+  writeFileSync(data: string | Uint8Array, options?: import('fs').WriteFileOptions) {
+    try {
+      writeFileSync(this.fullPath, data, options);
+    } catch (error) {
+      const exposedError = new FileReadError(`Failed to write file at path: ${this.fullPath}`);
+      exposedError.cause = error;
+      throw exposedError;
+    }
+  }
+
   /**
    * If the directory does not exist, creates a directory at this path. If the directory already exists, does nothing.
    * @throws {FileReadError} If a file already exists at this path, or if the directory cannot be created.
@@ -341,7 +352,7 @@ export class GitTree extends VirtualPath<GitTree> {
       return GitTree._indexCache.get(this.indexName)!;
     }
 
-    const indexPath = new Path(this.repoDir.join(this.indexName).absolute);
+    const indexPath = new Path(this.repoDir.join('rooms', this.indexName, 'index').absolute);
     if (indexPath.exists) {
       const indexBuffer = await fs.promises.readFile(indexPath.absolute);
       const index = await GitIndex.fromBuffer(indexBuffer);
@@ -359,10 +370,14 @@ export class GitTree extends VirtualPath<GitTree> {
    * repository and index name.
    */
   async persistIndex() {
-    const indexPath = path.join(this.repoDir.absolute, this.indexName);
+    const indexFolder = new Path(this.repoDir.absolute).join('rooms', this.indexName);
+    if (!indexFolder.exists) {
+      await indexFolder.makeDirectory({ recursive: true });
+    }
+    const indexPath = indexFolder.join('index');
     const index = await this.getIndex();
     const buffer = (await index.toObject()) as Buffer;
-    await writeFile(indexPath, buffer);
+    await indexPath.writeFile(buffer);
   }
 
   /**
