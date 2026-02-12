@@ -1,4 +1,12 @@
-import fs, { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from '@zenfs/core';
+import fs, {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from '@zenfs/core';
 import * as path from '@zenfs/core/path';
 import { mkdir, opendir, readdir, rm, writeFile } from '@zenfs/core/promises';
 import {
@@ -288,6 +296,22 @@ export class Path extends VirtualPath<Path> {
     if (!this.exists) {
       try {
         await mkdir(this.fullPath, options);
+      } catch (error) {
+        const exposedError = new FileReadError(`Failed to create directory at path: ${this.fullPath}`);
+        exposedError.cause = error;
+        throw exposedError;
+      }
+    }
+  }
+
+  /**
+   * If the directory does not exist, creates a directory at this path. If the directory already exists, does nothing.
+   * @throws {FileReadError} If a file already exists at this path, or if the directory cannot be created.
+   */
+  makeDirectorySync(options?: { recursive?: boolean; mode?: import('fs').Mode }) {
+    if (!this.exists) {
+      try {
+        mkdirSync(this.fullPath, options);
       } catch (error) {
         const exposedError = new FileReadError(`Failed to create directory at path: ${this.fullPath}`);
         exposedError.cause = error;

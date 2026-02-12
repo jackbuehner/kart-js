@@ -1,5 +1,4 @@
 import * as fs from '@zenfs/core';
-import { rm } from '@zenfs/core/promises';
 import {
   addRemote,
   clone,
@@ -30,6 +29,7 @@ export class Kart {
   readonly repoDir: Path;
   readonly repoTree: GitTree;
   readonly throttledFs: typeof fs;
+  readonly remoteUrl: string;
 
   readonly roomName: string;
   readonly ydoc: YDoc;
@@ -37,7 +37,7 @@ export class Kart {
   readonly data: Data;
   readonly diff: Diff;
 
-  protected constructor(dir: Path, refObjectId: string, roomName: string) {
+  protected constructor(dir: Path, remoteUrl: string, refObjectId: string, roomName: string) {
     // TODO: add a locking mechnanism to prevent multiple Kart instances from using the same repoDir simultaneously
     // TODO: add a locking mechanism to prevent multiple Kart instances from using the same room simultaneously
     this.repoDir = dir;
@@ -51,6 +51,7 @@ export class Kart {
     }
     this.roomName = roomName;
     this.repoTree = new GitTree(gitdir, gitdir, roomName, refObjectId);
+    this.remoteUrl = remoteUrl;
 
     this.ydoc = Kart.loadYDoc(gitdir, roomName, refObjectId);
 
@@ -68,7 +69,7 @@ export class Kart {
     const roomPath = gitdir.join('rooms', roomName);
     const ydocPath = roomPath.join(`${roomName}.ydoc`);
     const refObjectIdPath = roomPath.join('ref');
-    roomPath.makeDirectory({ recursive: true });
+    roomPath.makeDirectorySync({ recursive: true });
 
     // if a ydoc already exists, the record of it's starting ref must also exist
     // and match the refObjectId parameter to ensure that the correct ydoc is loaded
@@ -165,7 +166,8 @@ export class Kart {
     await this.initAndFetchBareRepo(url, gitdir, { corsProxy, onProgress });
     const refObjectId = await resolveRef({ fs, gitdir: gitdir.absolute, ref });
     await this.resetIndex(gitdir, roomName, refObjectId);
-    return new Kart(new Path(dir), refObjectId, roomName);
+    const remoteUrl = url;
+    return new Kart(new Path(dir), remoteUrl, refObjectId, roomName);
   }
 
   /**
@@ -213,7 +215,13 @@ export class Kart {
     }
 
     const refObjectId = await resolveRef({ fs, gitdir: gitdir.absolute, ref });
-    return new Kart(dir, refObjectId, roomName);
+    await this.populateIndex(gitdir, roomName, refObjectId);
+    const remoteUrl = origin.url;
+    return new Kart(dir, remoteUrl, refObjectId, roomName);
+  }
+
+  async attach(roomName: string, ref = 'refs/remotes/origin/HEAD') {
+    return Kart.attach(this.remoteUrl, this.repoDir, roomName, ref);
   }
 
   private static http = (async () => {
@@ -371,6 +379,22 @@ export class Kart {
     }
 
     // populate the index with the contents of the tree at the given ref
+    await this.populateIndex(gitDir, indexName, refObjectId);
+  }
+
+  /**
+   * Populates the index at the given git directory and index name with the contents of the tree at the given ref.
+   *
+   * @remarks
+   * This is used to initialize the index for a new Kart instance based on the current state of the repository at the given ref.
+   *
+   * @param gitDir - The path to the local git directory.
+   * @param indexName - The name of the index to create (e.g. "index").
+   * @param ref - The git ref to read the tree from (e.g. "HEAD").
+   * @throws If the index cannot be created or saved.
+   * @returns A promise that resolves when the index has been successfully created.
+   */
+  private static async populateIndex(gitDir: Path, indexName: string, refObjectId: string) {
     const repoTree = new GitTree(gitDir, gitDir, indexName, refObjectId);
     const index = await repoTree.getIndex();
     await walk({
@@ -401,18 +425,18 @@ export class Kart {
     await repoTree.persistIndex();
   }
 
-  async [Symbol.asyncDispose]() {
+  async [Symbol.dispose]() {
     this.data.removeAllEventListeners();
 
     // // Since a new index is created for each Kart instance to start working changes,
     // // we need to clean up the index when disposing the Kart instance.
     // const indexPath = this.repoDir.join('.kartjs', this.uuid);
     // if (indexPath.exists) {
-    //   await indexPath.rm({ force: true });
+    //   indexPath.rm({ force: true });
     // }
   }
 
   dispose() {
-    return this[Symbol.asyncDispose]();
+    return this[Symbol.dispose]();
   }
 }

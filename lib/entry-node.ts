@@ -1,5 +1,6 @@
 import './shims/loadShims.ts'; // this MUST be first to avoid @zenfs/core's incorrect Uint8Array polyfills
 
+export { KartWebSocketServer } from './collaboration/KartWebSocketServer.ts';
 export { TableDatasetV3 } from './table-dataset-v3/TableDatasetV3.ts';
 export { TrackedChanges, type TrackedChange } from './table-dataset-v3/TrackedChanges.ts';
 export * from './utils/features/index.ts';
@@ -11,7 +12,7 @@ import { promisify } from 'node:util';
 import { Kart as _Kart } from './Kart.ts';
 
 // Windows does not allow case-sensitive files and directories by default.
-// Since the git repositorys Kart works with may contain files or directories
+// Since the git repositories Kart works with may contain files or directories
 // that only differ by case, we need to enable case-sensitivity on Windows.
 // This wrapper around the NodeFS adds this functionality.
 const fs = (() => {
