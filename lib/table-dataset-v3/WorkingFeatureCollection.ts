@@ -320,7 +320,7 @@ export class WorkingFeatureCollection extends Emitter<{
       Object.keys(newProperties).length !== Object.keys(currentFeature.properties || {}).length ||
       stringify(currentFeature.properties) !== stringify(newProperties);
     if (hasChanges) {
-      this.trackedChanges.setProperties(featureId, { properties: newProperties });
+      this.trackedChanges.setProperties(featureId, newProperties);
       super.emit('feature:updated', { featureId, changes: { properties: newProperties } });
       super.emit('feature', { type: 'updated', partialFeature: { id: featureId, properties: newProperties } });
     }
@@ -348,7 +348,7 @@ export class WorkingFeatureCollection extends Emitter<{
       );
     }
 
-    this.trackedChanges.setGeometry(featureId, { geometry });
+    this.trackedChanges.setGeometry(featureId, geometry);
     super.emit('feature:updated', { featureId, changes: { geometry } });
     super.emit('feature', { type: 'updated', partialFeature: { id: featureId, geometry } });
   }

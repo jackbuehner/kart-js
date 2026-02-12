@@ -1,11 +1,13 @@
 import './shims/loadShims.ts'; // this MUST be first to avoid @zenfs/core's incorrect Uint8Array polyfills
 
+export { KartProvider } from './collaboration/KartProvider.ts';
 export { TableDatasetV3 } from './table-dataset-v3/TableDatasetV3.ts';
 export { TrackedChanges, type TrackedChange } from './table-dataset-v3/TrackedChanges.ts';
 export * from './utils/features/index.ts';
 
 import { mount, resolveMountConfig } from '@zenfs/core';
 import { IndexedDB } from '@zenfs/dom';
+import { Doc as _YDoc } from 'yjs';
 import { Kart as _Kart } from './Kart.ts';
 
 /**
@@ -22,6 +24,9 @@ async function init(storeName: string) {
   // use indexdDB with ZenFS
   const fs = await resolveMountConfig({ backend: IndexedDB, storeName });
   mount(storeName, fs);
+
+  // @ts-expect-error
+  globalThis.kartFs = fs;
 }
 
 export class Kart extends _Kart {
@@ -35,3 +40,5 @@ export class Kart extends _Kart {
     return _Kart.pull(url, dir, ...restArgs);
   }
 }
+
+export const YDoc = _YDoc;

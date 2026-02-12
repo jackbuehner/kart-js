@@ -1,5 +1,6 @@
 import './shims/loadShims.ts'; // this MUST be first to avoid @zenfs/core's incorrect Uint8Array polyfills
 
+export { KartProvider } from './collaboration/KartProvider.ts';
 export { KartWebSocketServer } from './collaboration/KartWebSocketServer.ts';
 export { TableDatasetV3 } from './table-dataset-v3/TableDatasetV3.ts';
 export { TrackedChanges, type TrackedChange } from './table-dataset-v3/TrackedChanges.ts';

@@ -49,6 +49,7 @@
     "wkt-parser": "^1.5.2",
     "ws": "^8.19.0",
     "y-protocols": "^1.0.7",
+    "y-websocket": "^3.0.0",
     "yjs": "^13.6.29",
     "zod": "^4.3.6",
     "zod-geojson": "^1.6.2"

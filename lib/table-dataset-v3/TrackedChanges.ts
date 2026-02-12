@@ -346,9 +346,9 @@ export class TrackedChanges implements Omit<
   /**
    * Register an update to the geometry of a feature.
    */
-  setGeometry(key: string, value: Omit<TrackedGeometryUpdate, 'type'>): this {
+  setGeometry(key: string, geometry: TrackedGeometryUpdate['geometry']): this {
     if (!this.has(key)) {
-      this.set(key, { type: 'update', ...value });
+      this.set(key, { type: 'update', geometry });
       return this;
     }
 
@@ -359,12 +359,12 @@ export class TrackedChanges implements Omit<
       this.set(key, {
         type: 'update',
         properties: current.properties,
-        geometry: value.geometry,
+        geometry: geometry,
       });
       return this;
     }
 
-    this.set(key, { type: 'update', ...value });
+    this.set(key, { type: 'update', geometry });
     return this;
   }
 
@@ -380,11 +380,11 @@ export class TrackedChanges implements Omit<
    * delete the feature, calculate the new feature ID based on the new primary keys,
    * and then insert the new feature.
    */
-  setProperties(key: string, value: Omit<TrackedPropertiesUpdate, 'type'>): this {
+  setProperties(key: string, properties: TrackedPropertiesUpdate['properties']): this {
     // if primary keys are being changed, the consumer needs to delete and insert instead
-    value.properties ??= {};
+    properties ??= {};
     for (const primaryKey of this.primaryKeyNames) {
-      if (primaryKey in value.properties) {
+      if (primaryKey in properties) {
         throw new Error(
           `Cannot update primary key "${primaryKey}" using setProperties. To change primary keys, delete the feature and insert a new one instead.`
         );
@@ -392,7 +392,7 @@ export class TrackedChanges implements Omit<
     }
 
     if (!this.has(key)) {
-      this.set(key, { type: 'update', ...value });
+      this.set(key, { type: 'update', properties });
       return this;
     }
 
@@ -402,13 +402,27 @@ export class TrackedChanges implements Omit<
     if (current.type === 'update' && 'geometry' in current) {
       this.set(key, {
         type: 'update',
-        properties: value.properties,
+        properties,
         geometry: current.geometry,
       });
       return this;
     }
 
-    this.set(key, { type: 'update', ...value });
+    // to prevent unnecessary updates, do nothing if there
+    // are no actual property changes
+    if (current.type === 'update' && 'properties' in current && current.properties !== null) {
+      const currentProperties = current.properties;
+      const newProperties = properties;
+      const hasChanges = Object.keys(newProperties).some((propertyKey) => {
+        return currentProperties[propertyKey] !== newProperties[propertyKey];
+      });
+
+      if (!hasChanges) {
+        return this;
+      }
+    }
+
+    this.set(key, { type: 'update', properties });
     return this;
   }
 
